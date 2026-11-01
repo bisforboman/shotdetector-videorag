@@ -13,10 +13,15 @@ video ──VideoDocumentReader──► one section per shot ──ImageAlterna
 - **`VideoDocumentReader`** (an `IngestionDocumentReader`) detects the shots with `ShotDetection.DetectAsync` and makes
   one `IngestionDocumentSection` per shot: a header `## 00:00:02.000 – 00:00:04.000`, a paragraph naming the shot, and,
   when FFmpeg 8's shared libraries load, the shot's middle frame as a JPEG (FrameReader's `ImageEncoder`, at most
-  640 px wide) with no alternative text yet. Each element's metadata has the shot's number and its start and end in
+  640 px wide) with no alternative text yet; a shot longer than 8 s (`StillInterval`, `--still-every`) gets a still in
+  the middle of each 8 s or shorter stretch instead, since a fade or a dissolve the detector doesn't cut at leaves one
+  long "shot" over several scenes (Sintel's trailer: two of 14 and 24 s). `--detector` picks ShotDetector's detectors,
+  comma-separated to run several (`content,threshold` also cuts at fades to black: 20 shots there instead of 10). Each element's metadata has the shot's number and its start and end in
   seconds. A `Stream` that isn't a file's is copied to a temporary file first, since the stills seek.
 - **Transcripts**: with an `ITranscriber` (`WhisperTranscriber`: whisper.cpp through Whisper.net, a ggml model file)
-  each shot also gets a paragraph `Said: …` of the speech in it; a segment goes to the shot it overlaps most. The
+  each shot also gets a paragraph `Said: …` of the speech in it; a segment goes to the shot it overlaps most. Sound
+  annotations (`[MUSIC PLAYING]`, `(laughs)`, ♪) are removed from any transcriber's text, so a shot with only music
+  says nothing and shots don't look alike for it; `--keep-sound-tags` keeps them. The
   soundtrack is decoded in managed code by [ManagedCodecs](https://github.com/bisforboman/ManagedCodecs) (AAC LC and
   HE-AAC in MP4 or ADTS), downmixed and resampled to Whisper's 16 kHz mono (`Soundtrack`, a windowed-sinc resampler).
   No FFmpeg is involved; other containers (MKV, WebM, AVI's audio) and codecs (Opus, MP3) get no transcript.

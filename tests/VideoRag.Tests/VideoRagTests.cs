@@ -179,6 +179,77 @@ public sealed class VideoRagTests(ThreeShots clip) : IClassFixture<ThreeShots>
         Assert.Contains("Said: Welcome to the test card.", hit.Content);
     }
 
+    [Theory]
+    [InlineData("[MUSIC PLAYING]", "")]
+    [InlineData(" [MUSIC PLAYING] [GUNSHOTS] ", "")]
+    [InlineData("(laughs)", "")]
+    [InlineData("♪ ♪", "")]
+    [InlineData("- [door slams] -", "")]
+    [InlineData("I'm searching (sighs) for them. [MUSIC PLAYING]", "I'm searching for them.")]
+    [InlineData("♪ Over the hills ♪", "Over the hills")]
+    [InlineData("Wait [gunshot] , what?", "Wait, what?")]
+    [InlineData("Plain speech.", "Plain speech.")]
+    public void SoundTagsAreRemoved(string text, string spoken) => Assert.Equal(spoken, VideoDocumentReader.WithoutSoundTags(text));
+
+    [Fact]
+    public async Task ShotsWithOnlySoundsSayNothingUnlessTagsAreKept()
+    {
+        var script = new ScriptTranscriber(
+            new(TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(1.8), "[MUSIC PLAYING]"),
+            new(TimeSpan.FromSeconds(2.2), TimeSpan.FromSeconds(3.8), "I'm searching (sighs) for them. [MUSIC PLAYING]"));
+
+        var removed = await new VideoDocumentReader(Options with { Transcriber = script }).ReadAsync(new FileInfo(clip.Path), "three.mp4");
+        var kept = await new VideoDocumentReader(Options with { Transcriber = script, KeepSoundTags = true }).ReadAsync(new FileInfo(clip.Path), "three.mp4");
+
+        Assert.Equal(["", "Said: I'm searching for them.", ""], Said(removed));
+        Assert.Equal(["Said: [MUSIC PLAYING]", "Said: I'm searching (sighs) for them. [MUSIC PLAYING]", ""], Said(kept));
+
+        static string[] Said(IngestionDocument document) =>
+            [.. document.Sections.Select(s => string.Concat(s.Elements.OfType<IngestionDocumentParagraph>().Select(p => p.GetMarkdown()).Where(t => t.StartsWith(VideoDocumentReader.SaidPrefix, StringComparison.Ordinal))))];
+    }
+
+    [Theory]
+    [InlineData(0, 2, 8, new[] { 1.0 })]
+    [InlineData(0, 8, 8, new[] { 4.0 })]
+    [InlineData(0, 24, 8, new[] { 4.0, 12, 20 })]
+    [InlineData(10, 10, 8, new[] { 12.5, 17.5 })]
+    [InlineData(28, 24.2, 0, new[] { 40.1 })] // no interval: the middle
+    public void LongShotsGetAStillPerInterval(double start, double duration, double every, double[] expected) =>
+        Assert.Equal(expected, VideoDocumentReader.StillTimes(start, duration, every > 0 ? TimeSpan.FromSeconds(every) : null), (a, b) => Math.Abs(a - b) < 1e-9);
+
+    [Fact]
+    public async Task EachIntervalOfAShotGetsItsStill()
+    {
+        var reader = new VideoDocumentReader(Options with { StillInterval = TimeSpan.FromSeconds(0.8) });
+        var document = await reader.ReadAsync(new FileInfo(clip.Path), "three.mp4");
+        if (!reader.HasStills)
+            return;
+
+        // Each 2-second shot: three stretches of 2/3 s, stills at 1/3, 1 and 5/3 s into it (timecodes truncate to ms).
+        foreach (var (section, i) in document.Sections.Select((s, i) => (s, i)))
+        {
+            var images = section.Elements.OfType<IngestionDocumentImage>().ToList();
+            Assert.Equal(3, images.Count);
+            Assert.Equal(
+                [$"![Shot {i + 1} at 00:00:0{(i * 2) + 0}.333](shot-{i + 1}-1.jpg)", $"![Shot {i + 1} at 00:00:0{(i * 2) + 1}.000](shot-{i + 1}-2.jpg)", $"![Shot {i + 1} at 00:00:0{(i * 2) + 1}.666](shot-{i + 1}-3.jpg)"],
+                images.Select(m => m.GetMarkdown()));
+        }
+    }
+
+    [Fact]
+    public async Task DetectorsCanBeChosenAndCombined()
+    {
+        foreach (var detection in new[]
+        {
+            new DetectionOptions { Detector = DetectorKind.Content },
+            new DetectionOptions { Detectors = [new(DetectorKind.Content), new(DetectorKind.Threshold)] },
+        })
+        {
+            var document = await new VideoDocumentReader(Options with { Detection = detection }).ReadAsync(new FileInfo(clip.Path), "three.mp4");
+            Assert.Equal(Headers.Select(h => $"## {h}"), document.Sections.Select(s => s.Elements[0].GetMarkdown()));
+        }
+    }
+
     static float[] Tone(double frequency, int rate, int count) =>
         [.. Enumerable.Range(0, count).Select(i => (float)Math.Sin(2 * Math.PI * frequency * i / rate))];
 

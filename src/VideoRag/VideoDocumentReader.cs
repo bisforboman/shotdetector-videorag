@@ -25,6 +25,19 @@ public sealed record VideoDocumentReaderOptions
     /// said in it. The soundtrack is decoded by ManagedCodecs (AAC in MP4 or ADTS); null, or other audio: no transcripts.
     /// </summary>
     public ITranscriber? Transcriber { get; init; }
+
+    /// <summary>
+    /// Whether to keep a transcript's sound annotations: <c>[MUSIC PLAYING]</c>, <c>(laughs)</c>, ♪. False (the default)
+    /// removes them from every transcriber's segments, and a segment left without a letter or digit, so a shot with only
+    /// music says nothing and shots never look alike for sharing "[MUSIC]".
+    /// </summary>
+    public bool KeepSoundTags { get; init; }
+
+    /// <summary>
+    /// A shot longer than this gets a still per stretch of this length (the middle of each), not only its middle: a fade
+    /// or a dissolve the detector doesn't cut at leaves one long "shot" over several scenes. Null: the middle only.
+    /// </summary>
+    public TimeSpan? StillInterval { get; init; } = TimeSpan.FromSeconds(8);
 }
 
 /// <summary>
@@ -32,8 +45,8 @@ public sealed record VideoDocumentReaderOptions
 /// (<c>## 00:00:02.000 – 00:00:04.000</c>), which <c>SectionChunker</c> makes every chunk's context and
 /// <c>VectorStoreWriter</c> stores, so a search result says where in the video it is. Each section also holds a
 /// paragraph naming the shot, with a <see cref="VideoDocumentReaderOptions.Transcriber"/> a paragraph of what's said
-/// in the shot, and, with FFmpeg's libraries, its middle frame as a JPEG with no alternative text, for
-/// <see cref="ImageAlternativeTextEnricher"/> to caption.
+/// in the shot, and, with FFmpeg's libraries, its middle frame as a JPEG with no alternative text (a long shot: one per
+/// <see cref="VideoDocumentReaderOptions.StillInterval"/>), for <see cref="ImageAlternativeTextEnricher"/> to caption.
 /// </summary>
 public sealed class VideoDocumentReader(VideoDocumentReaderOptions? options = null) : IngestionDocumentReader
 {
@@ -86,7 +99,7 @@ public sealed class VideoDocumentReader(VideoDocumentReaderOptions? options = nu
         foreach (var shot in result.Shots)
             document.Sections.Add(Section(shot, result.Shots.Count));
         if (_options.Transcriber is { } transcriber)
-            await AddTranscriptsAsync(path, transcriber, result.Shots, document, cancellationToken).ConfigureAwait(false);
+            await AddTranscriptsAsync(path, transcriber, _options.KeepSoundTags, result.Shots, document, cancellationToken).ConfigureAwait(false);
         if (stills)
             await Task.Run(() => AddStills(path, result.Shots, document, cancellationToken), cancellationToken).ConfigureAwait(false);
         return document;
@@ -105,15 +118,16 @@ public sealed class VideoDocumentReader(VideoDocumentReaderOptions? options = nu
         return section;
     }
 
-    static async Task AddTranscriptsAsync(string path, ITranscriber transcriber, IReadOnlyList<Shot> shots, IngestionDocument document, CancellationToken cancellationToken)
+    static async Task AddTranscriptsAsync(string path, ITranscriber transcriber, bool keepSoundTags, IReadOnlyList<Shot> shots, IngestionDocument document, CancellationToken cancellationToken)
     {
         if (await Task.Run(() => Soundtrack.Read(path, cancellationToken), cancellationToken).ConfigureAwait(false) is not var (samples, start))
             return;
         var said = new List<string>?[shots.Count];
         await foreach (var segment in transcriber.TranscribeAsync(samples, cancellationToken).ConfigureAwait(false))
         {
-            if (ShotOf(shots, (start + segment.Start).TotalSeconds, (start + segment.End).TotalSeconds) is int i)
-                (said[i] ??= []).Add(segment.Text.Trim());
+            string text = keepSoundTags ? segment.Text.Trim() : WithoutSoundTags(segment.Text);
+            if (text.Length > 0 && ShotOf(shots, (start + segment.Start).TotalSeconds, (start + segment.End).TotalSeconds) is int i)
+                (said[i] ??= []).Add(text);
         }
 
         for (int i = 0; i < shots.Count; i++)
@@ -121,6 +135,28 @@ public sealed class VideoDocumentReader(VideoDocumentReaderOptions? options = nu
             if (said[i] is { } lines)
                 document.Sections[i].Elements.Add(Tagged(new IngestionDocumentParagraph($"{SaidPrefix}{string.Join(' ', lines)}"), shots[i]));
         }
+    }
+
+    /// <summary>
+    /// The text without sound annotations (<c>[...]</c>, <c>(...)</c>, ♪ and ♫) and with single spaces, or "" when no
+    /// letter or digit is left.
+    /// </summary>
+    internal static string WithoutSoundTags(string text)
+    {
+        string spoken = System.Text.RegularExpressions.Regex.Replace(text, @"\[[^\]]*\]|\([^)]*\)|[♪♫]", " ");
+        spoken = System.Text.RegularExpressions.Regex.Replace(spoken, @"\s+", " ").Trim();
+        spoken = System.Text.RegularExpressions.Regex.Replace(spoken, @" (?=[.,!?;:])", "");
+        return spoken.Any(char.IsLetterOrDigit) ? spoken : "";
+    }
+
+    /// <summary>
+    /// When a shot's stills are taken: the middle of each of the equal stretches, at most <paramref name="interval"/>
+    /// long, that the shot divides into; the shot's middle alone without an interval.
+    /// </summary>
+    internal static IReadOnlyList<double> StillTimes(double start, double duration, TimeSpan? interval)
+    {
+        int count = interval is { } every && every > TimeSpan.Zero ? Math.Max(1, (int)Math.Ceiling(duration / every.TotalSeconds)) : 1;
+        return [.. Enumerable.Range(0, count).Select(k => start + (duration * ((2 * k) + 1) / (2 * count)))];
     }
 
     /// <summary>The index of the shot a stretch overlaps most (the first on a tie), null if it overlaps none.</summary>
@@ -147,17 +183,22 @@ public sealed class VideoDocumentReader(VideoDocumentReaderOptions? options = nu
         {
             cancellationToken.ThrowIfCancellationRequested();
             var shot = shots[i];
-            var middle = TimeSpan.FromSeconds(shot.Start.Seconds + (shot.Duration.Seconds / 2));
-            if (!reader.TryTakeAt(middle, out var frame))
-                continue;
-            using (frame)
+            var times = StillTimes(shot.Start.Seconds, shot.Duration.Seconds, _options.StillInterval);
+            for (int k = 0; k < times.Count; k++)
             {
-                document.Sections[i].Elements.Add(Tagged(new IngestionDocumentImage($"![Shot {shot.Number} at {Timecode(middle)}](shot-{shot.Number}.jpg)")
+                var at = TimeSpan.FromSeconds(times[k]);
+                if (!reader.TryTakeAt(at, out var frame))
+                    continue;
+                using (frame)
                 {
-                    Content = encoder.Encode(frame, size),
-                    MediaType = "image/jpeg",
-                },
-                    shot));
+                    string file = times.Count == 1 ? $"shot-{shot.Number}.jpg" : $"shot-{shot.Number}-{k + 1}.jpg";
+                    document.Sections[i].Elements.Add(Tagged(new IngestionDocumentImage($"![Shot {shot.Number} at {Timecode(at)}]({file})")
+                    {
+                        Content = encoder.Encode(frame, size),
+                        MediaType = "image/jpeg",
+                    },
+                        shot));
+                }
             }
         }
     }

@@ -1,7 +1,7 @@
 # shotdetector-videorag
 
 A Microsoft.Extensions.DataIngestion (MEDI) video reader: one section per shot (ShotDetector from NuGet, MIT), the shot's
-middle frame as a JPEG for MEDI's image enricher, into Semantic Kernel's in-memory vector store. A sample, not a package.
+middle frame (one per 8 s of a long shot) as a JPEG for MEDI's image enricher, into Semantic Kernel's in-memory vector store. A sample, not a package.
 It moved here from shotdetector's `examples/VideoRag` on 2026-11-01 (the owner's choice; shotdetector's
 docs/decisions/2026-11-01-videorag-repo.md and 2026-10-31-videorag-sample.md, scoping in docs/ideas/dataingestion-video-reader.md).
 
