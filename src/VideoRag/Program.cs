@@ -1,7 +1,12 @@
 // Video RAG with Microsoft.Extensions.DataIngestion (README.md): videos in, one chunk per shot in an
 // in-memory vector store, answers with the shot's times.
 //
-//   dotnet run --project src/VideoRag -- [--ffmpeg-libs <dir>] [--whisper-model <ggml file>] [--scenes [--scene-threshold 0.6] [--scene-max 60]] [--sentences <stanza model dir> [--sentences-lang en]] [--ask "question"]... <video>...
+//   dotnet run --project src/VideoRag -- [--ffmpeg-libs <dir>] [--whisper-model <ggml file>] [--scenes [--scene-threshold 0.6] [--scene-max 60]] [--sentences <stanza model dir>] [--entities <stanza model dir> [--entity NAME]] [--stanza-lang en] [--ask "question"]... <video>...
+//
+// --entities stores each chunk's named entities (people, organizations, places, ...: StanzaSharp's EntityEnricher on
+// Stanza's default_fast ner, `stanzasharp download models/stanza/en --package default_fast --processors tokenize,ner`
+// after the tokenize download below, about 135 MB) and prints them with every hit; --entity NAME searches only chunks
+// naming NAME. --stanza-lang (or --sentences-lang) is both Stanza pipelines' language.
 //
 // --sentences chunks with StanzaSharp's SentenceChunker (cuts only between sentences) on Stanza's tokenizer from
 // <stanza model dir>, a language's folder: `dotnet tool install -g StanzaSharp.Tool`, then
@@ -26,6 +31,8 @@ string? whisperModel = Environment.GetEnvironmentVariable("VIDEORAG_WHISPER_MODE
 SceneGrouperOptions? scenes = null;
 string? sentencesDir = null;
 string sentencesLang = "en";
+string? entitiesDir = null;
+string? entity = null;
 var questions = new List<string>();
 var videos = new List<FileInfo>();
 for (int i = 0; i < args.Length; i++)
@@ -50,7 +57,13 @@ for (int i = 0; i < args.Length; i++)
         case "--sentences" when i + 1 < args.Length:
             sentencesDir = args[++i];
             break;
-        case "--sentences-lang" when i + 1 < args.Length:
+        case "--entities" when i + 1 < args.Length:
+            entitiesDir = args[++i];
+            break;
+        case "--entity" when i + 1 < args.Length:
+            entity = args[++i];
+            break;
+        case "--stanza-lang" or "--sentences-lang" when i + 1 < args.Length:
             sentencesLang = args[++i];
             break;
         case "--ask" when i + 1 < args.Length:
@@ -64,7 +77,7 @@ for (int i = 0; i < args.Length; i++)
 
 if (videos.Count == 0)
 {
-    Console.Error.WriteLine("Usage: VideoRag [--ffmpeg-libs <dir>] [--whisper-model <ggml file>] [--scenes [--scene-threshold 0.6] [--scene-max 60]] [--sentences <stanza model dir> [--sentences-lang en]] [--ask \"question\"]... <video>...");
+    Console.Error.WriteLine("Usage: VideoRag [--ffmpeg-libs <dir>] [--whisper-model <ggml file>] [--scenes [--scene-threshold 0.6] [--scene-max 60]] [--sentences <stanza model dir>] [--entities <stanza model dir> [--entity NAME]] [--stanza-lang en] [--ask \"question\"]... <video>...");
     return 2;
 }
 
@@ -92,23 +105,18 @@ var options = new VideoDocumentReaderOptions { FfmpegLibraries = libs, Transcrib
 if (!new VideoDocumentReader(options).HasStills)
     Console.Error.WriteLine("FFmpeg 8's shared libraries didn't load (--ffmpeg-libs): shots without stills, detection through ffmpeg on PATH.");
 
-StanzaSharp.Pipeline? sentences = null;
-if (sentencesDir is not null)
+if (entity is not null && entitiesDir is null)
 {
-    try
-    {
-        sentences = StanzaSharp.Pipeline.Load(sentencesDir, new StanzaSharp.PipelineOptions { Language = sentencesLang, Processors = "tokenize" });
-    }
-    catch (Exception e) when (e is IOException or ArgumentException or InvalidDataException)
-    {
-        Console.Error.WriteLine($"Stanza's tokenizer didn't load from {sentencesDir}: {e.Message}");
-        Console.Error.WriteLine($"Download it: dotnet tool install -g StanzaSharp.Tool; stanzasharp download {sentencesDir} --lang {sentencesLang} --processors tokenize");
-        return 2;
-    }
+    Console.Error.WriteLine("--entity needs --entities.");
+    return 2;
 }
 
-using var sentencesPipeline = sentences;
-using var index = new VideoIndex(chat, embeddings, dimensions, options, scenes, sentences);
+using var sentences = sentencesDir is null ? null : LoadStanza(sentencesDir, "default", "tokenize");
+using var entities = entitiesDir is null ? null : LoadStanza(entitiesDir, "default_fast", "tokenize,ner");
+if ((sentencesDir is not null && sentences is null) || (entitiesDir is not null && entities is null))
+    return 2;
+
+using var index = new VideoIndex(chat, embeddings, dimensions, options, scenes, sentences, entities);
 foreach (var result in await index.AddAsync(videos))
 {
     Console.WriteLine(result.Succeeded
@@ -130,9 +138,28 @@ foreach (string question in questions)
     await Answer(question);
 return 0;
 
+StanzaSharp.Pipeline? LoadStanza(string dir, string package, string processors)
+{
+    try
+    {
+        return StanzaSharp.Pipeline.Load(dir, new StanzaSharp.PipelineOptions { Language = sentencesLang, Package = package, Processors = processors });
+    }
+    catch (Exception e) when (e is IOException or ArgumentException or InvalidDataException)
+    {
+        Console.Error.WriteLine($"Stanza's {processors} didn't load from {dir}: {e.Message}");
+        Console.Error.WriteLine($"Download it: dotnet tool install -g StanzaSharp.Tool; stanzasharp download {dir} --lang {sentencesLang} --processors tokenize"
+            + (package == "default" ? "" : $"; stanzasharp download {dir} --lang {sentencesLang} --package {package} --processors {processors}"));
+        return null;
+    }
+}
+
 async Task Answer(string question)
 {
     Console.WriteLine(question);
-    foreach (var hit in await index.SearchAsync(question))
+    foreach (var hit in await index.SearchAsync(question, entity: entity))
+    {
         Console.WriteLine($"  {hit.Score:F3}  {hit.Content.ReplaceLineEndings(" ")}"); // the content starts with its header, the context
+        if (hit.Entities.Count > 0)
+            Console.WriteLine($"         entities: {string.Join(", ", hit.Entities)}");
+    }
 }

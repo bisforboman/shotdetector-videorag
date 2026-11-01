@@ -17,12 +17,13 @@ docs/decisions/2026-11-01-videorag-repo.md and 2026-10-31-videorag-sample.md, sc
 - Work on a branch and open a PR, don't push to main; squash-merge it once CI is green and nothing is left to push
   (auto-merge is off in this repository).
 - Before pushing: `dotnet test ShotDetector.VideoRag.slnx` (ffmpeg on PATH; `SHOTDETECTOR_FFMPEG_LIBS` for the stills;
-  `STANZASHARP_MODELS`, a folder with Stanza's English tokenizer, for the sentence chunker's tests:
-  `stanzasharp download models/stanza/en --processors tokenize`).
+  `STANZASHARP_MODELS`, a folder with Stanza's English tokenizer and default_fast ner, for the sentence and entity tests:
+  `stanzasharp download models/stanza/en --processors tokenize`, then the same with `--package default_fast
+  --processors tokenize,ner`).
 - Pinned actions: by commit SHA with the tag in a comment. `.github/actions/btbn-ffmpeg` is copied from shotdetector.
 - The next slices are tracked in this repository's issues: stills without FFmpeg via ManagedCodecs (#6, waiting for
-  ManagedCodecs 0.6.0's `Thumbnail.ToJpeg`, bisforboman/ManagedCodecs#290). Transcripts (#2), scenes (#3) and
-  StanzaSharp's sentence chunker (#4) are in.
+  ManagedCodecs 0.6.0's `Thumbnail.ToJpeg`, bisforboman/ManagedCodecs#290). Transcripts (#2), scenes (#3),
+  StanzaSharp's sentence chunker (#4) and entity enricher are in.
 - Always prompt the owner for input (Claude's AskUserQuestion) before choosing what to do next or between options;
   don't settle open choices in prose.
 - Commit messages: what and why. Small commits.
