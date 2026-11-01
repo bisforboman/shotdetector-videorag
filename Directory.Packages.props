@@ -4,7 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- ShotDetector from nuget.org (FrameReader comes with it). -->
-    <PackageVersion Include="ShotDetector" Version="3.25.0" />
+    <PackageVersion Include="ShotDetector" Version="3.26.0" />
     <!-- Microsoft.Extensions.DataIngestion is preview and ships monthly: pinned, moved by Dependabot. -->
     <PackageVersion Include="Microsoft.Extensions.DataIngestion" Version="10.11.0-preview.1.26513.7" />
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.11.0" />
