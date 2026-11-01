@@ -16,6 +16,8 @@ docs/decisions/2026-11-01-videorag-repo.md and 2026-10-31-videorag-sample.md, sc
 - Work on a branch and open a PR, don't push to main; turn auto-merge on once nothing is left to push.
 - Before pushing: `dotnet test ShotDetector.VideoRag.slnx` (ffmpeg on PATH; `SHOTDETECTOR_FFMPEG_LIBS` for the stills).
 - Pinned actions: by commit SHA with the tag in a comment. `.github/actions/btbn-ffmpeg` is copied from shotdetector.
-- The next slices (transcripts with Whisper.net, the StanzaSharp chunker once bisforboman/StanzaSharp#233 exists) are
-  tracked in this repository's issues.
+- The next slices are tracked in this repository's issues: transcripts with Whisper.net (#2), shots grouped into
+  scenes (#3), the StanzaSharp chunker once bisforboman/StanzaSharp#233 exists (#4).
+- Always prompt the owner for input (Claude's AskUserQuestion) before choosing what to do next or between options;
+  don't settle open choices in prose.
 - Commit messages: what and why. Small commits.
