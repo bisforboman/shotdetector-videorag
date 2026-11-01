@@ -23,6 +23,7 @@
     <PackageReference Include="ManagedCodecs.Containers" />
     <PackageReference Include="Whisper.net" />
     <PackageReference Include="Whisper.net.Runtime" />
+    <PackageReference Include="StanzaSharp.DataIngestion" />
   </ItemGroup>
 
   <ItemGroup>

@@ -4,6 +4,8 @@ using Microsoft.Extensions.DataIngestion.Chunkers;
 using Microsoft.Extensions.VectorData;
 using Microsoft.ML.Tokenizers;
 using Microsoft.SemanticKernel.Connectors.InMemory;
+using StanzaSharp;
+using StanzaSharp.DataIngestion;
 
 namespace VideoRag;
 
@@ -15,8 +17,11 @@ public sealed record Hit(string Context, string Content, double Score);
 /// <see cref="ImageAlternativeTextEnricher"/> (captions the stills with <paramref name="chat"/>), <see cref="SectionChunker"/>
 /// (a chunk per shot, its header the context) and <see cref="VectorStoreWriter{T}"/> (embeds with <paramref name="embeddings"/>).
 /// With <paramref name="scenes"/>, <see cref="SceneGrouper"/> groups the captioned shots into scenes first: a chunk per scene.
+/// With <paramref name="sentences"/> (a StanzaSharp pipeline with at least its tokenizer), StanzaSharp's
+/// <see cref="SentenceChunker"/> chunks instead: the same header context, but a section too long for one chunk is cut
+/// between sentences, never inside one. The index doesn't dispose the pipeline.
 /// </summary>
-public sealed class VideoIndex(IChatClient chat, IEmbeddingGenerator<string, Embedding<float>> embeddings, int dimensions, VideoDocumentReaderOptions? options = null, SceneGrouperOptions? scenes = null)
+public sealed class VideoIndex(IChatClient chat, IEmbeddingGenerator<string, Embedding<float>> embeddings, int dimensions, VideoDocumentReaderOptions? options = null, SceneGrouperOptions? scenes = null, Pipeline? sentences = null)
     : IDisposable
 {
     readonly VectorStoreWriter<string> _writer = new(
@@ -27,10 +32,9 @@ public sealed class VideoIndex(IChatClient chat, IEmbeddingGenerator<string, Emb
     /// <summary>Reads, captions, chunks and stores the videos.</summary>
     public async Task<IReadOnlyList<IngestionResult>> AddAsync(IEnumerable<FileInfo> videos, CancellationToken cancellationToken = default)
     {
-        using var pipeline = new IngestionPipeline<string>(
-            new VideoDocumentReader(options),
-            new SectionChunker(new IngestionChunkerOptions(TiktokenTokenizer.CreateForModel("gpt-4o"))),
-            _writer);
+        var chunking = new IngestionChunkerOptions(TiktokenTokenizer.CreateForModel("gpt-4o"));
+        IngestionChunker<string> chunker = sentences is null ? new SectionChunker(chunking) : new SentenceChunker(sentences, chunking);
+        using var pipeline = new IngestionPipeline<string>(new VideoDocumentReader(options), chunker, _writer);
         pipeline.DocumentProcessors.Add(new ImageAlternativeTextEnricher(new EnricherOptions(chat)));
         if (scenes is not null)
             pipeline.DocumentProcessors.Add(new SceneGrouper(embeddings, scenes));

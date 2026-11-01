@@ -7,7 +7,7 @@ into searchable chunks with [Microsoft.Extensions.DataIngestion](https://learn.m
 ```
 video ──VideoDocumentReader──► one section per shot ──ImageAlternativeTextEnricher──► captioned stills
       ──SceneGrouper (--scenes)──► alike neighbours as one section
-      ──SectionChunker──► a chunk per shot (or scene), its "## start – end" header as context ──VectorStoreWriter──► in-memory store
+      ──SectionChunker (or SentenceChunker, --sentences)──► a chunk per shot (or scene), its "## start – end" header as context ──VectorStoreWriter──► in-memory store
 ```
 
 - **`VideoDocumentReader`** (an `IngestionDocumentReader`) detects the shots with `ShotDetection.DetectAsync` and makes
@@ -29,8 +29,13 @@ video ──VideoDocumentReader──► one section per shot ──ImageAlterna
   shot's captions and transcript and merges a shot into the scene before it when its cosine similarity to the previous
   shot is at least `Threshold` (0.6, `--scene-threshold`; it depends on the embedding model), until the scene reaches
   `MaxDuration` (60 s, `--scene-max`). A shot with neither caption nor transcript stays on its own. A scene is one
-  flat section: `## start – end` (the chunk's context), then each shot under `### Shot n: start – end`. Flat, because
-  `SectionChunker` makes a chunk per nested section.
+  flat section with one header: `## start – end` (the chunk's context), then each shot after a paragraph
+  `Shot n: start – end.`. `SectionChunker` makes a chunk per nested section, and `SentenceChunker` starts one at every
+  header.
+- **`SentenceChunker`** (StanzaSharp.DataIngestion, opt-in with `--sentences <dir>`) chunks in place of `SectionChunker`
+  with the same header context, but cuts a shot or scene too long for one chunk between sentences (Stanza's tokenizer
+  and sentence splitter, managed code), never inside one. It starts a chunk at every header, which is why a scene holds
+  one header and marks its shots with paragraphs.
 - **`VideoIndex`** puts the pipeline together on Semantic Kernel's in-memory vector store and searches it.
 
 ## Run it
@@ -49,6 +54,9 @@ times and its text.
 - **Whisper**: `--whisper-model` (or `VIDEORAG_WHISPER_MODEL`) names a ggml model file, e.g. `ggml-base.en.bin` from
   [whisper.cpp's models](https://huggingface.co/ggerganov/whisper.cpp). Nothing is downloaded; without one, no
   transcripts. The language is detected.
+- **Sentences**: `--sentences` names a language folder of Stanza's models with its tokenizer:
+  `dotnet tool install -g StanzaSharp.Tool`, then `stanzasharp download models/stanza/en --processors tokenize` (about
+  1.2 MB); `--sentences-lang` for another language (default `en`).
 - **Models**: any OpenAI-compatible endpoint, through Microsoft.Extensions.AI.OpenAI.
 
   | Variable | Default | |
@@ -70,3 +78,5 @@ times and its text.
 
 The test, tests/VideoRag.Tests, runs the reader and the whole pipeline offline on a 3-shot clip with a 440 Hz AAC
 soundtrack, with a stub chat client, a scripted transcriber and a bag-of-words embedding generator; no Whisper model.
+The sentence chunker's tests need Stanza's tokenizer: `STANZASHARP_MODELS` names its folder (CI downloads it); without
+it they have nothing to run on and pass.

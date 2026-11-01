@@ -27,6 +27,20 @@ jobs:
           build: gpl-shared
       - name: FFmpeg's libraries
         run: echo "SHOTDETECTOR_FFMPEG_LIBS=${{ steps.ffmpeg.outputs.bin }}" >> "$GITHUB_ENV"
+      # Stanza's English tokenizer (about 1.2 MB) for the sentence chunker's tests, downloaded by StanzaSharp's tool,
+      # which checks each file's MD5. The tool's version is StanzaSharp.DataIngestion's (Directory.Packages.props).
+      - id: stanza
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: models/stanza/en
+          key: stanza-en-tokenize-1.15.0
+      - name: Stanza's tokenizer
+        if: steps.stanza.outputs.cache-hit != 'true'
+        run: |
+          dotnet tool install --tool-path .tools StanzaSharp.Tool --version 1.15.0
+          .tools/stanzasharp download models/stanza/en --processors tokenize
+      - name: Stanza's models
+        run: echo "STANZASHARP_MODELS=$GITHUB_WORKSPACE/models/stanza/en" >> "$GITHUB_ENV"
       - name: Build
         run: dotnet build ShotDetector.VideoRag.slnx -c Release
       - name: Test
