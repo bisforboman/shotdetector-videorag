@@ -22,7 +22,7 @@ docs/decisions/2026-11-01-videorag-repo.md and 2026-10-31-videorag-sample.md, sc
   --processors tokenize,ner`).
 - Pinned actions: by commit SHA with the tag in a comment. `.github/actions/btbn-ffmpeg` is copied from shotdetector.
 - The next slices are tracked in this repository's issues: stills without FFmpeg via ManagedCodecs (#6, waiting for
-  ManagedCodecs 0.6.0's `Thumbnail.ToJpeg`, bisforboman/ManagedCodecs#290). Transcripts (#2), scenes (#3) and
+  ManagedCodecs 0.6.0's `Thumbnail.ToJpeg`, bisforboman/ManagedCodecs#290). Transcripts (#2), scenes (#3),
   StanzaSharp's sentence chunker (#4) and entity enricher are in.
 - Always prompt the owner for input (Claude's AskUserQuestion) before choosing what to do next or between options;
   don't settle open choices in prose.
