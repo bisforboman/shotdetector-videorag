@@ -15,6 +15,8 @@
     <PackageVersion Include="ManagedCodecs.Containers" Version="0.5.0" />
     <PackageVersion Include="Whisper.net" Version="1.9.1" />
     <PackageVersion Include="Whisper.net.Runtime" Version="1.9.1" />
+    <!-- Sentence-aware chunks (the sentences option): StanzaSharp's tokenizer, managed, and its MEDI chunker. A preview while MEDI is. -->
+    <PackageVersion Include="StanzaSharp.DataIngestion" Version="1.15.0-preview" />
     <!-- Tests. -->
     <PackageVersion Include="GitHubActionsTestLogger" Version="3.0.5" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />

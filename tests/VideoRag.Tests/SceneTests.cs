@@ -97,7 +97,7 @@ public sealed class SceneTests(ThreeShots clip) : IClassFixture<ThreeShots>
     }
 
     /// <summary>Sections as <see cref="VideoDocumentReader"/> makes them, back to back: each shot's length, caption and transcript.</summary>
-    static IngestionDocument Document(params (double Seconds, string? Caption, string? Said)[] shots)
+    internal static IngestionDocument Document(params (double Seconds, string? Caption, string? Said)[] shots)
     {
         var document = new IngestionDocument("video.mp4");
         double start = 0;
