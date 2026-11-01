@@ -19,13 +19,20 @@ public sealed record VideoDocumentReaderOptions
 
     /// <summary>The stills' largest width, in pixels; narrower videos keep their own.</summary>
     public int StillMaxWidth { get; init; } = 640;
+
+    /// <summary>
+    /// Speech to text for the soundtrack (e.g. <see cref="WhisperTranscriber"/>): each shot gets a paragraph of what's
+    /// said in it. The soundtrack is decoded by ManagedCodecs (AAC in MP4 or ADTS); null, or other audio: no transcripts.
+    /// </summary>
+    public ITranscriber? Transcriber { get; init; }
 }
 
 /// <summary>
 /// A video as an <see cref="IngestionDocument"/>: one section per shot, headed by the shot's times
 /// (<c>## 00:00:02.000 – 00:00:04.000</c>), which <c>SectionChunker</c> makes every chunk's context and
 /// <c>VectorStoreWriter</c> stores, so a search result says where in the video it is. Each section also holds a
-/// paragraph naming the shot and, with FFmpeg's libraries, its middle frame as a JPEG with no alternative text, for
+/// paragraph naming the shot, with a <see cref="VideoDocumentReaderOptions.Transcriber"/> a paragraph of what's said
+/// in the shot, and, with FFmpeg's libraries, its middle frame as a JPEG with no alternative text, for
 /// <see cref="ImageAlternativeTextEnricher"/> to caption.
 /// </summary>
 public sealed class VideoDocumentReader(VideoDocumentReaderOptions? options = null) : IngestionDocumentReader
@@ -75,6 +82,8 @@ public sealed class VideoDocumentReader(VideoDocumentReaderOptions? options = nu
         var document = new IngestionDocument(identifier);
         foreach (var shot in result.Shots)
             document.Sections.Add(Section(shot, result.Shots.Count));
+        if (_options.Transcriber is { } transcriber)
+            await AddTranscriptsAsync(path, transcriber, result.Shots, document, cancellationToken).ConfigureAwait(false);
         if (stills)
             await Task.Run(() => AddStills(path, result.Shots, document, cancellationToken), cancellationToken).ConfigureAwait(false);
         return document;
@@ -91,6 +100,39 @@ public sealed class VideoDocumentReader(VideoDocumentReaderOptions? options = nu
             $"Shot {shot.Number} of {count}, from {shot.Start.Timecode()} to {shot.End.Timecode()} ({shot.Duration.SecondsText()} s)."),
             shot));
         return section;
+    }
+
+    static async Task AddTranscriptsAsync(string path, ITranscriber transcriber, IReadOnlyList<Shot> shots, IngestionDocument document, CancellationToken cancellationToken)
+    {
+        if (await Task.Run(() => Soundtrack.Read(path, cancellationToken), cancellationToken).ConfigureAwait(false) is not var (samples, start))
+            return;
+        var said = new List<string>?[shots.Count];
+        await foreach (var segment in transcriber.TranscribeAsync(samples, cancellationToken).ConfigureAwait(false))
+        {
+            if (ShotOf(shots, (start + segment.Start).TotalSeconds, (start + segment.End).TotalSeconds) is int i)
+                (said[i] ??= []).Add(segment.Text.Trim());
+        }
+
+        for (int i = 0; i < shots.Count; i++)
+        {
+            if (said[i] is { } lines)
+                document.Sections[i].Elements.Add(Tagged(new IngestionDocumentParagraph($"Said: {string.Join(' ', lines)}"), shots[i]));
+        }
+    }
+
+    /// <summary>The index of the shot a stretch overlaps most (the first on a tie), null if it overlaps none.</summary>
+    internal static int? ShotOf(IReadOnlyList<Shot> shots, double start, double end)
+    {
+        int? best = null;
+        double most = 0;
+        for (int i = 0; i < shots.Count; i++)
+        {
+            double overlap = Math.Min(end, shots[i].End.Seconds) - Math.Max(start, shots[i].Start.Seconds);
+            if (overlap > most || (best is null && overlap == 0 && start >= shots[i].Start.Seconds && start < shots[i].End.Seconds))
+                (best, most) = (i, overlap);
+        }
+
+        return best;
     }
 
     void AddStills(string path, IReadOnlyList<Shot> shots, IngestionDocument document, CancellationToken cancellationToken)

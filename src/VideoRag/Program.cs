@@ -1,8 +1,10 @@
 // Video RAG with Microsoft.Extensions.DataIngestion (README.md): videos in, one chunk per shot in an
 // in-memory vector store, answers with the shot's times.
 //
-//   dotnet run --project src/VideoRag -- [--ffmpeg-libs <dir>] [--ask "question"]... <video>...
+//   dotnet run --project src/VideoRag -- [--ffmpeg-libs <dir>] [--whisper-model <ggml file>] [--ask "question"]... <video>...
 //
+// With a Whisper model (--whisper-model or VIDEORAG_WHISPER_MODEL, a ggml file such as ggml-base.en.bin) each shot
+// also gets what's said in it; the soundtrack is decoded in managed code (AAC in MP4 or ADTS).
 // The models: any OpenAI-compatible endpoint (OPENAI_BASE_URL, e.g. http://localhost:11434/v1 for Ollama;
 // OPENAI_API_KEY), VIDEORAG_CHAT_MODEL (a vision model, captions the stills; default gpt-4o-mini),
 // VIDEORAG_EMBEDDING_MODEL (default text-embedding-3-small) and VIDEORAG_DIMENSIONS (its vector size; default 1536).
@@ -13,6 +15,7 @@ using OpenAI;
 using VideoRag;
 
 string? libs = Environment.GetEnvironmentVariable("SHOTDETECTOR_FFMPEG_LIBS");
+string? whisperModel = Environment.GetEnvironmentVariable("VIDEORAG_WHISPER_MODEL");
 var questions = new List<string>();
 var videos = new List<FileInfo>();
 for (int i = 0; i < args.Length; i++)
@@ -21,6 +24,9 @@ for (int i = 0; i < args.Length; i++)
     {
         case "--ffmpeg-libs" when i + 1 < args.Length:
             libs = args[++i];
+            break;
+        case "--whisper-model" when i + 1 < args.Length:
+            whisperModel = args[++i];
             break;
         case "--ask" when i + 1 < args.Length:
             questions.Add(args[++i]);
@@ -33,7 +39,7 @@ for (int i = 0; i < args.Length; i++)
 
 if (videos.Count == 0)
 {
-    Console.Error.WriteLine("Usage: VideoRag [--ffmpeg-libs <dir>] [--ask \"question\"]... <video>...");
+    Console.Error.WriteLine("Usage: VideoRag [--ffmpeg-libs <dir>] [--whisper-model <ggml file>] [--ask \"question\"]... <video>...");
     return 2;
 }
 
@@ -50,7 +56,14 @@ var chat = client.GetChatClient(Environment.GetEnvironmentVariable("VIDEORAG_CHA
 var embeddings = client.GetEmbeddingClient(Environment.GetEnvironmentVariable("VIDEORAG_EMBEDDING_MODEL") ?? "text-embedding-3-small").AsIEmbeddingGenerator();
 int dimensions = int.Parse(Environment.GetEnvironmentVariable("VIDEORAG_DIMENSIONS") ?? "1536", CultureInfo.InvariantCulture);
 
-var options = new VideoDocumentReaderOptions { FfmpegLibraries = libs };
+if (whisperModel is { Length: > 0 } && !File.Exists(whisperModel))
+{
+    Console.Error.WriteLine($"No Whisper model at {whisperModel}.");
+    return 2;
+}
+
+using var transcriber = whisperModel is { Length: > 0 } ? new WhisperTranscriber(whisperModel) : null;
+var options = new VideoDocumentReaderOptions { FfmpegLibraries = libs, Transcriber = transcriber };
 if (!new VideoDocumentReader(options).HasStills)
     Console.Error.WriteLine("FFmpeg 8's shared libraries didn't load (--ffmpeg-libs): shots without stills, detection through ffmpeg on PATH.");
 
