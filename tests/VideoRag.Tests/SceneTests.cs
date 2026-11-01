@@ -20,8 +20,8 @@ public sealed class SceneTests(ThreeShots clip) : IClassFixture<ThreeShots>
         Assert.Equal(["## 00:00:00.000 – 00:00:02.000", "## 00:00:02.000 – 00:00:06.000"], Heads(document));
         var scene = document.Sections[1].Elements;
         Assert.Equal(
-            ["## 00:00:02.000 – 00:00:06.000", "### Shot 2: 00:00:02.000 – 00:00:04.000", "Shot 2 of 3.", "Said: These are the colour bars", "image",
-             "### Shot 3: 00:00:04.000 – 00:00:06.000", "Shot 3 of 3.", "Said: colour bars", "image"],
+            ["## 00:00:02.000 – 00:00:06.000", "Shot 2: 00:00:02.000 – 00:00:04.000.", "Shot 2 of 3.", "Said: These are the colour bars", "image",
+             "Shot 3: 00:00:04.000 – 00:00:06.000.", "Shot 3 of 3.", "Said: colour bars", "image"],
             scene.Select(e => e is IngestionDocumentImage ? "image" : e.GetMarkdown()));
         Assert.Equal(2, scene[0].Metadata[SceneGrouper.SceneKey]);
         Assert.Equal(2.0, scene[0].Metadata[VideoDocumentReader.StartKey]);
@@ -38,7 +38,7 @@ public sealed class SceneTests(ThreeShots clip) : IClassFixture<ThreeShots>
         await new SceneGrouper(new WordEmbeddings()).ProcessAsync(document);
 
         Assert.Equal(3, document.Sections.Count);
-        Assert.All(document.Sections, s => Assert.DoesNotContain(s.Elements, e => e is IngestionDocumentHeader { Level: 3 }));
+        Assert.All(document.Sections, s => Assert.Single(s.Elements, e => e is IngestionDocumentHeader));
     }
 
     [Fact]
@@ -72,7 +72,7 @@ public sealed class SceneTests(ThreeShots clip) : IClassFixture<ThreeShots>
             chunks.Add(chunk);
 
         Assert.Equal(["## 00:00:00.000 – 00:00:02.000", "## 00:00:02.000 – 00:00:06.000"], chunks.Select(c => c.Context));
-        Assert.Contains("### Shot 3: 00:00:04.000 – 00:00:06.000", chunks[1].Content);
+        Assert.Contains("Shot 3: 00:00:04.000 – 00:00:06.000.", chunks[1].Content);
     }
 
     [Fact]
@@ -92,8 +92,8 @@ public sealed class SceneTests(ThreeShots clip) : IClassFixture<ThreeShots>
         Assert.Equal([$"## {Headers[0]}", "## 00:00:02.000 – 00:00:06.000"], Heads(result.Document!));
         var hit = Assert.Single(await index.SearchAsync("colour bars", top: 1));
         Assert.Equal($"## 00:00:02.000 – 00:00:06.000", hit.Context);
-        Assert.Contains("### Shot 2", hit.Content);
-        Assert.Contains("### Shot 3", hit.Content);
+        Assert.Contains("Shot 2: ", hit.Content);
+        Assert.Contains("Shot 3: ", hit.Content);
     }
 
     /// <summary>Sections as <see cref="VideoDocumentReader"/> makes them, back to back: each shot's length, caption and transcript.</summary>

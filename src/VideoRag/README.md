@@ -29,8 +29,9 @@ video ──VideoDocumentReader──► one section per shot ──ImageAlterna
   shot's captions and transcript and merges a shot into the scene before it when its cosine similarity to the previous
   shot is at least `Threshold` (0.6, `--scene-threshold`; it depends on the embedding model), until the scene reaches
   `MaxDuration` (60 s, `--scene-max`). A shot with neither caption nor transcript stays on its own. A scene is one
-  flat section: `## start – end` (the chunk's context), then each shot under `### Shot n: start – end`. Flat, because
-  `SectionChunker` makes a chunk per nested section.
+  flat section with one header: `## start – end` (the chunk's context), then each shot after a paragraph
+  `Shot n: start – end.`. `SectionChunker` makes a chunk per nested section, and `SentenceChunker` starts one at every
+  header.
 - **`VideoIndex`** puts the pipeline together on Semantic Kernel's in-memory vector store and searches it.
 
 ## Run it

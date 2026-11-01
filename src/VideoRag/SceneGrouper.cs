@@ -22,7 +22,9 @@ public sealed record SceneGrouperOptions
 /// each shot's captions and transcript are embedded, and a shot joins the scene before it when it is similar enough to
 /// the shot before it (neighbour to neighbour). A shot with neither captions nor transcript stays on its own.
 /// A scene of several shots becomes one section headed <c>## start – end</c> (the chunk's context), each shot under
-/// its own <c>### Shot n: start – end</c>; a section must stay flat, since <c>SectionChunker</c> makes a chunk per nested section.
+/// a paragraph <c>Shot n: start – end.</c> (with the shot's metadata), not a header: a section must stay flat and hold one
+/// header, since <c>SectionChunker</c> makes a chunk per nested section and StanzaSharp's <c>SentenceChunker</c> starts one at
+/// every header.
 /// A scene of one shot keeps the shot's section as it was.
 /// </summary>
 public sealed class SceneGrouper(IEmbeddingGenerator<string, Embedding<float>> embeddings, SceneGrouperOptions? options = null) : IngestionDocumentProcessor
@@ -80,10 +82,10 @@ public sealed class SceneGrouper(IEmbeddingGenerator<string, Embedding<float>> e
         scene.Elements.Add(header);
         foreach (var (section, shot) in shots)
         {
-            var shotHeader = new IngestionDocumentHeader($"### Shot {shot.Number}: {shot.From} – {shot.To}") { Level = 3 };
+            var label = new IngestionDocumentParagraph($"Shot {shot.Number}: {shot.From} – {shot.To}.");
             foreach (var (key, value) in shot.Header.Metadata)
-                shotHeader.Metadata[key] = value;
-            scene.Elements.Add(shotHeader);
+                label.Metadata[key] = value;
+            scene.Elements.Add(label);
             foreach (var element in section.Elements.Skip(1))
                 scene.Elements.Add(element);
         }
