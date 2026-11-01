@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/VideoRag/VideoRag.csproj" />
+  <Project Path="tests/VideoRag.Tests/VideoRag.Tests.csproj" />
+</Solution>

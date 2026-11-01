@@ -1,0 +1,94 @@
+name: BtbN's FFmpeg
+description: >-
+  BtbN's static FFmpeg build from one pinned release (a month-end one: BtbN keeps those, while daily releases are
+  pruned), downloaded with retries and checked against the SHA-256 recorded here before it's unpacked, then cached. CI's
+  ffmpeg so can't change under it unannounced, and a tampered or truncated archive fails the step. To move the pin: a
+  newer month-end release's tag, its archives' names and hashes (its checksums.sha256), in the table below.
+inputs:
+  version:
+    description: FFmpeg series, 8.1 or 9.0
+    default: '8.1'
+  platform:
+    description: BtbN's platform name (linux64, linuxarm64, win64)
+    default: linux64
+  build:
+    description: gpl (static executables) or gpl-shared (the executables and their shared libraries, in bin)
+    default: gpl
+  add-to-path:
+    description: Put its bin folder on PATH
+    default: 'true'
+outputs:
+  bin:
+    description: The folder with ffmpeg and ffprobe (and, for gpl-shared, the libraries they use)
+    value: ${{ steps.get.outputs.bin }}
+runs:
+  using: composite
+  steps:
+    # The pin: the release, and each archive's name (without extension) and SHA-256.
+    - id: pin
+      shell: bash
+      env:
+        V: ${{ inputs.version }}
+        P: ${{ inputs.platform }}
+        B: ${{ inputs.build }}
+      run: |
+        release=autobuild-2026-09-30-13-08
+        case "$V" in
+          8.1) tag=n8.1.3-9-g29e619e767 ;;
+          9.0) tag=n9.0.2-17-g2a571b6068 ;;
+          *) echo "::error::No pinned BtbN build of FFmpeg $V"; exit 1 ;;
+        esac
+        name="ffmpeg-$tag-$P-$B-$V"
+        case "$name" in
+          ffmpeg-n8.1.3-9-g29e619e767-linux64-gpl-8.1) sum=97ce978979194b5cf7e06a5e68020dbdaa7a4f3294c5452b6a1bc347100dbb79 ;;
+          ffmpeg-n8.1.3-9-g29e619e767-linux64-gpl-shared-8.1) sum=76649c19a7a4615b367251ba4a8adc643f65831278a00e7a0c38398f7f06484b ;;
+          ffmpeg-n8.1.3-9-g29e619e767-linuxarm64-gpl-8.1) sum=10523d1e0be6b3ce62a9708cc50815c4b5eb5f36ae147fbe2afeecda6f2d6845 ;;
+          ffmpeg-n8.1.3-9-g29e619e767-linuxarm64-gpl-shared-8.1) sum=d5b52fcb4f8d86d997bb75f6c4b383ca0be3f4cd9efd94ab3b4f27b22984f91c ;;
+          ffmpeg-n8.1.3-9-g29e619e767-win64-gpl-8.1) sum=7b801cdd3a1a0bb54ae6f572187e68b4ed54f52086cfee133fab2180bfb429fa ;;
+          ffmpeg-n8.1.3-9-g29e619e767-win64-gpl-shared-8.1) sum=dfe81c3aa0a546ee81980b1b824486dd0fe0a1d452f00cb55135379a74be7bcf ;;
+          ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-9.0) sum=68ee646831adaae2495618346f3bba94ff207ff83bbd34d643e7004730d66269 ;;
+          ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-shared-9.0) sum=01a9764d0b5364b66cfeb4617557c64321b0e232e172ec73f0a701c5f7694326 ;;
+          ffmpeg-n9.0.2-17-g2a571b6068-linuxarm64-gpl-9.0) sum=91afcd7695d4bbbb9e0057aa10baaf9875ec4e1a97303f9059ec971336a2ab46 ;;
+          ffmpeg-n9.0.2-17-g2a571b6068-linuxarm64-gpl-shared-9.0) sum=706ccdbc8b0537646345532713a9b6750c0a6258cc001ec1c0379754f0ae730a ;;
+          ffmpeg-n9.0.2-17-g2a571b6068-win64-gpl-9.0) sum=a0e45723c72141975f51d8666302e614711745f3102b704ca3f82c897a58d278 ;;
+          ffmpeg-n9.0.2-17-g2a571b6068-win64-gpl-shared-9.0) sum=3da6c7b60bb9ccd73ec5b5e815ba804a0879eb362ba0e3beebce50174c022696 ;;
+          *) echo "::error::No pinned BtbN archive $name"; exit 1 ;;
+        esac
+        { echo "release=$release"; echo "name=$name"; echo "sum=$sum"; } >> "$GITHUB_OUTPUT"
+
+    - id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/btbn-${{ steps.pin.outputs.name }}
+        key: btbn-${{ steps.pin.outputs.release }}-${{ steps.pin.outputs.name }}
+
+    - id: get
+      shell: bash
+      env:
+        RELEASE: ${{ steps.pin.outputs.release }}
+        NAME: ${{ steps.pin.outputs.name }}
+        SUM: ${{ steps.pin.outputs.sum }}
+        P: ${{ inputs.platform }}
+        HIT: ${{ steps.cache.outputs.cache-hit }}
+        ADD: ${{ inputs.add-to-path }}
+      run: |
+        dir="$RUNNER_TEMP/btbn-$NAME"
+        if [ "$HIT" != true ]; then
+          # Windows builds are .zip, the others .tar.xz; each checked against the pinned SHA-256 before it's unpacked.
+          case "$P" in win*) ext=zip ;; *) ext=tar.xz ;; esac
+          archive="$RUNNER_TEMP/$NAME.$ext"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 30 -o "$archive" \
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/$RELEASE/$NAME.$ext" \
+            || { echo "::error::BtbN's $NAME didn't download"; exit 1; }
+          # From stdin: with a file name, Windows' sha256sum prints "\<hash>" for a path with backslashes.
+          got=$( { sha256sum < "$archive" 2>/dev/null || shasum -a 256 < "$archive"; } | cut -d' ' -f1)
+          [ "$got" = "$SUM" ] || { echo "::error::$NAME.$ext has SHA-256 $got, not the pinned $SUM"; exit 1; }
+          rm -rf "$dir" && mkdir -p "$dir"
+          if [ "$ext" = zip ]; then unzip -qq "$archive" -d "$dir"; else tar -xJf "$archive" -C "$dir"; fi
+          rm -f "$archive"
+          # Shared: the libraries beside the executables, one folder to load both from.
+          if [ -d "$dir/$NAME/lib" ]; then cp -a "$dir/$NAME"/lib/*.so* "$dir/$NAME/bin/" 2>/dev/null || true; fi
+        fi
+        "$dir/$NAME/bin/ffmpeg" -hide_banner -version | head -1
+        echo "bin=$dir/$NAME/bin" >> "$GITHUB_OUTPUT"
+        if [ "$ADD" = true ]; then echo "$dir/$NAME/bin" >> "$GITHUB_PATH"; fi

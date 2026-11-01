@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DOTNET_NOLOGO: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+      # FFmpeg 8.1's shared build: its ffmpeg makes the test clip, its libraries let the tests check the stills.
+      - id: ffmpeg
+        uses: ./.github/actions/btbn-ffmpeg
+        with:
+          build: gpl-shared
+      - name: FFmpeg's libraries
+        run: echo "SHOTDETECTOR_FFMPEG_LIBS=${{ steps.ffmpeg.outputs.bin }}" >> "$GITHUB_ENV"
+      - name: Build
+        run: dotnet build ShotDetector.VideoRag.slnx -c Release
+      - name: Test
+        run: dotnet test ShotDetector.VideoRag.slnx -c Release --no-build --logger GitHubActions
