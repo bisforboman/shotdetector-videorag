@@ -14,8 +14,9 @@ public sealed record Hit(string Context, string Content, double Score);
 /// Videos in an in-memory vector store, through DataIngestion's own pieces: <see cref="VideoDocumentReader"/>,
 /// <see cref="ImageAlternativeTextEnricher"/> (captions the stills with <paramref name="chat"/>), <see cref="SectionChunker"/>
 /// (a chunk per shot, its header the context) and <see cref="VectorStoreWriter{T}"/> (embeds with <paramref name="embeddings"/>).
+/// With <paramref name="scenes"/>, <see cref="SceneGrouper"/> groups the captioned shots into scenes first: a chunk per scene.
 /// </summary>
-public sealed class VideoIndex(IChatClient chat, IEmbeddingGenerator<string, Embedding<float>> embeddings, int dimensions, VideoDocumentReaderOptions? options = null)
+public sealed class VideoIndex(IChatClient chat, IEmbeddingGenerator<string, Embedding<float>> embeddings, int dimensions, VideoDocumentReaderOptions? options = null, SceneGrouperOptions? scenes = null)
     : IDisposable
 {
     readonly VectorStoreWriter<string> _writer = new(
@@ -31,6 +32,8 @@ public sealed class VideoIndex(IChatClient chat, IEmbeddingGenerator<string, Emb
             new SectionChunker(new IngestionChunkerOptions(TiktokenTokenizer.CreateForModel("gpt-4o"))),
             _writer);
         pipeline.DocumentProcessors.Add(new ImageAlternativeTextEnricher(new EnricherOptions(chat)));
+        if (scenes is not null)
+            pipeline.DocumentProcessors.Add(new SceneGrouper(embeddings, scenes));
         var results = new List<IngestionResult>();
         await foreach (var result in pipeline.ProcessAsync(videos, cancellationToken).ConfigureAwait(false))
             results.Add(result);

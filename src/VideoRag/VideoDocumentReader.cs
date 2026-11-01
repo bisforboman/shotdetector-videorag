@@ -44,6 +44,9 @@ public sealed class VideoDocumentReader(VideoDocumentReaderOptions? options = nu
 
     public const string EndKey = "end";
 
+    /// <summary>The start of a shot's transcript paragraph.</summary>
+    public const string SaidPrefix = "Said: ";
+
     readonly VideoDocumentReaderOptions _options = options ?? new();
 
     /// <summary>Whether this reader's sections get stills (FFmpeg's libraries load).</summary>
@@ -116,7 +119,7 @@ public sealed class VideoDocumentReader(VideoDocumentReaderOptions? options = nu
         for (int i = 0; i < shots.Count; i++)
         {
             if (said[i] is { } lines)
-                document.Sections[i].Elements.Add(Tagged(new IngestionDocumentParagraph($"Said: {string.Join(' ', lines)}"), shots[i]));
+                document.Sections[i].Elements.Add(Tagged(new IngestionDocumentParagraph($"{SaidPrefix}{string.Join(' ', lines)}"), shots[i]));
         }
     }
 

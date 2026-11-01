@@ -1,7 +1,10 @@
 // Video RAG with Microsoft.Extensions.DataIngestion (README.md): videos in, one chunk per shot in an
 // in-memory vector store, answers with the shot's times.
 //
-//   dotnet run --project src/VideoRag -- [--ffmpeg-libs <dir>] [--whisper-model <ggml file>] [--ask "question"]... <video>...
+//   dotnet run --project src/VideoRag -- [--ffmpeg-libs <dir>] [--whisper-model <ggml file>] [--scenes [--scene-threshold 0.6] [--scene-max 60]] [--ask "question"]... <video>...
+//
+// --scenes groups neighbouring shots whose captions and transcript embed alike into one chunk (a scene), up to
+// --scene-max seconds; --scene-threshold is the cosine similarity that counts as alike (it depends on the embedding model).
 //
 // With a Whisper model (--whisper-model or VIDEORAG_WHISPER_MODEL, a ggml file such as ggml-base.en.bin) each shot
 // also gets what's said in it; the soundtrack is decoded in managed code (AAC in MP4 or ADTS).
@@ -16,6 +19,7 @@ using VideoRag;
 
 string? libs = Environment.GetEnvironmentVariable("SHOTDETECTOR_FFMPEG_LIBS");
 string? whisperModel = Environment.GetEnvironmentVariable("VIDEORAG_WHISPER_MODEL");
+SceneGrouperOptions? scenes = null;
 var questions = new List<string>();
 var videos = new List<FileInfo>();
 for (int i = 0; i < args.Length; i++)
@@ -28,6 +32,15 @@ for (int i = 0; i < args.Length; i++)
         case "--whisper-model" when i + 1 < args.Length:
             whisperModel = args[++i];
             break;
+        case "--scenes":
+            scenes ??= new();
+            break;
+        case "--scene-threshold" when i + 1 < args.Length:
+            scenes = (scenes ?? new()) with { Threshold = double.Parse(args[++i], CultureInfo.InvariantCulture) };
+            break;
+        case "--scene-max" when i + 1 < args.Length:
+            scenes = (scenes ?? new()) with { MaxDuration = TimeSpan.FromSeconds(double.Parse(args[++i], CultureInfo.InvariantCulture)) };
+            break;
         case "--ask" when i + 1 < args.Length:
             questions.Add(args[++i]);
             break;
@@ -39,7 +52,7 @@ for (int i = 0; i < args.Length; i++)
 
 if (videos.Count == 0)
 {
-    Console.Error.WriteLine("Usage: VideoRag [--ffmpeg-libs <dir>] [--whisper-model <ggml file>] [--ask \"question\"]... <video>...");
+    Console.Error.WriteLine("Usage: VideoRag [--ffmpeg-libs <dir>] [--whisper-model <ggml file>] [--scenes [--scene-threshold 0.6] [--scene-max 60]] [--ask \"question\"]... <video>...");
     return 2;
 }
 
@@ -67,11 +80,11 @@ var options = new VideoDocumentReaderOptions { FfmpegLibraries = libs, Transcrib
 if (!new VideoDocumentReader(options).HasStills)
     Console.Error.WriteLine("FFmpeg 8's shared libraries didn't load (--ffmpeg-libs): shots without stills, detection through ffmpeg on PATH.");
 
-using var index = new VideoIndex(chat, embeddings, dimensions, options);
+using var index = new VideoIndex(chat, embeddings, dimensions, options, scenes);
 foreach (var result in await index.AddAsync(videos))
 {
     Console.WriteLine(result.Succeeded
-        ? $"{result.DocumentId}: {result.Document!.Sections.Count} shots"
+        ? $"{result.DocumentId}: {result.Document!.Sections.Count} {(scenes is null ? "shots" : "scenes")}"
         : $"{result.DocumentId}: failed, {result.Exception!.Message}");
 }
 

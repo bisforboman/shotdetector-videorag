@@ -42,12 +42,12 @@ public sealed class ThreeShots : IDisposable
 
 public sealed class VideoRagTests(ThreeShots clip) : IClassFixture<ThreeShots>
 {
-    static readonly string[] Headers = ["00:00:00.000 – 00:00:02.000", "00:00:02.000 – 00:00:04.000", "00:00:04.000 – 00:00:06.000"];
+    internal static readonly string[] Headers = ["00:00:00.000 – 00:00:02.000", "00:00:02.000 – 00:00:04.000", "00:00:04.000 – 00:00:06.000"];
 
     /// <summary>FFmpeg 8's libraries, as the other tests take them: set on CI, so the stills are checked there.</summary>
     static readonly string? Libraries = Environment.GetEnvironmentVariable("SHOTDETECTOR_FFMPEG_LIBS") is { Length: > 0 } dir ? dir : null;
 
-    static VideoDocumentReaderOptions Options => new() { FfmpegLibraries = Libraries };
+    internal static VideoDocumentReaderOptions Options => new() { FfmpegLibraries = Libraries };
 
     [Fact]
     public async Task ReaderMakesASectionPerShotHeadedByItsTimes()
@@ -210,8 +210,16 @@ public sealed class VideoRagTests(ThreeShots clip) : IClassFixture<ThreeShots>
     }
 
     /// <summary>The speech model: a fixed script, whatever the audio; the third line straddles the cut at 4 s, mostly before it.</summary>
-    sealed class ScriptTranscriber : ITranscriber
+    internal sealed class ScriptTranscriber(params TranscriptSegment[] script) : ITranscriber
     {
+        static readonly TranscriptSegment[] Default =
+        [
+            new(TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(1.5), " Welcome to the test card."),
+            new(TimeSpan.FromSeconds(2.5), TimeSpan.FromSeconds(3.5), "These are colour bars,"),
+            new(TimeSpan.FromSeconds(3.6), TimeSpan.FromSeconds(4.3), "and now"),
+            new(TimeSpan.FromSeconds(4.5), TimeSpan.FromSeconds(5.5), "a fractal."),
+        ];
+
         public int Calls { get; private set; }
 
         public int SampleCount { get; private set; }
@@ -221,15 +229,13 @@ public sealed class VideoRagTests(ThreeShots clip) : IClassFixture<ThreeShots>
             Calls++;
             SampleCount = samples.Length;
             await Task.Yield();
-            yield return new(TimeSpan.FromSeconds(0.2), TimeSpan.FromSeconds(1.5), " Welcome to the test card.");
-            yield return new(TimeSpan.FromSeconds(2.5), TimeSpan.FromSeconds(3.5), "These are colour bars,");
-            yield return new(TimeSpan.FromSeconds(3.6), TimeSpan.FromSeconds(4.3), "and now");
-            yield return new(TimeSpan.FromSeconds(4.5), TimeSpan.FromSeconds(5.5), "a fractal.");
+            foreach (var segment in script.Length > 0 ? script : Default)
+                yield return segment;
         }
     }
 
     /// <summary>The vision model: a fixed caption per image, as the structured array the enricher asks for.</summary>
-    sealed class CaptionClient : IChatClient
+    internal sealed class CaptionClient : IChatClient
     {
         internal static readonly string[] Captions = ["A test card with a moving gradient", "Vertical colour bars", "A fractal zoom"];
 
@@ -257,7 +263,7 @@ public sealed class VideoRagTests(ThreeShots clip) : IClassFixture<ThreeShots>
     }
 
     /// <summary>The embedding model: a bag of words, each word hashed to one of a few dimensions.</summary>
-    sealed class WordEmbeddings : IEmbeddingGenerator<string, Embedding<float>>
+    internal sealed class WordEmbeddings : IEmbeddingGenerator<string, Embedding<float>>
     {
         internal const int Dimensions = 64;
 
