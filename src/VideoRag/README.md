@@ -36,6 +36,10 @@ video ──VideoDocumentReader──► one section per shot ──ImageAlterna
   with the same header context, but cuts a shot or scene too long for one chunk between sentences (Stanza's tokenizer
   and sentence splitter, managed code), never inside one. It starts a chunk at every header, which is why a scene holds
   one header and marks its shots with paragraphs.
+- **`EntityEnricher`** (StanzaSharp.DataIngestion, opt-in with `--entities <dir>`) tags each chunk with the named
+  entities in its captions and transcript (Stanza's `default_fast` ner), kept to people, organizations, places, groups,
+  events, works and products (`VideoIndex.EntityTypes`; no dates or numbers, which timecodes would flood). They are
+  stored with the chunk and printed with every hit, and `--entity NAME` searches only the chunks naming NAME.
 - **`VideoIndex`** puts the pipeline together on Semantic Kernel's in-memory vector store and searches it.
 
 ## Run it
@@ -56,7 +60,9 @@ times and its text.
   transcripts. The language is detected.
 - **Sentences**: `--sentences` names a language folder of Stanza's models with its tokenizer:
   `dotnet tool install -g StanzaSharp.Tool`, then `stanzasharp download models/stanza/en --processors tokenize` (about
-  1.2 MB); `--sentences-lang` for another language (default `en`).
+  1.2 MB). **Entities**: `--entities` names one with `default_fast`'s ner too: after that,
+  `stanzasharp download models/stanza/en --package default_fast --processors tokenize,ner` (about 135 MB in all; one
+  folder can serve both). `--stanza-lang` for another language (default `en`).
 - **Models**: any OpenAI-compatible endpoint, through Microsoft.Extensions.AI.OpenAI.
 
   | Variable | Default | |
@@ -78,5 +84,5 @@ times and its text.
 
 The test, tests/VideoRag.Tests, runs the reader and the whole pipeline offline on a 3-shot clip with a 440 Hz AAC
 soundtrack, with a stub chat client, a scripted transcriber and a bag-of-words embedding generator; no Whisper model.
-The sentence chunker's tests need Stanza's tokenizer: `STANZASHARP_MODELS` names its folder (CI downloads it); without
-it they have nothing to run on and pass.
+The sentence chunker's and entity tests need Stanza's tokenizer and default_fast ner: `STANZASHARP_MODELS` names their
+folder (CI downloads them); without it they have nothing to run on and pass.
