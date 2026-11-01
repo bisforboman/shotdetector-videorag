@@ -6,7 +6,8 @@ into searchable chunks with [Microsoft.Extensions.DataIngestion](https://learn.m
 
 ```
 video ──VideoDocumentReader──► one section per shot ──ImageAlternativeTextEnricher──► captioned stills
-      ──SectionChunker──► a chunk per shot, its "## start – end" header as context ──VectorStoreWriter──► in-memory store
+      ──SceneGrouper (--scenes)──► alike neighbours as one section
+      ──SectionChunker──► a chunk per shot (or scene), its "## start – end" header as context ──VectorStoreWriter──► in-memory store
 ```
 
 - **`VideoDocumentReader`** (an `IngestionDocumentReader`) detects the shots with `ShotDetection.DetectAsync` and makes
@@ -24,6 +25,12 @@ video ──VideoDocumentReader──► one section per shot ──ImageAlterna
   record says where in the video it is, with no custom chunker.
 - **`ImageAlternativeTextEnricher`** (MEDI's own) captions every still with a vision model; the chunker then embeds the
   caption with the transcript. That's the visual and spoken search.
+- **`SceneGrouper`** (an `IngestionDocumentProcessor`, opt-in with `--scenes`) runs after the enricher: it embeds each
+  shot's captions and transcript and merges a shot into the scene before it when its cosine similarity to the previous
+  shot is at least `Threshold` (0.6, `--scene-threshold`; it depends on the embedding model), until the scene reaches
+  `MaxDuration` (60 s, `--scene-max`). A shot with neither caption nor transcript stays on its own. A scene is one
+  flat section: `## start – end` (the chunk's context), then each shot under `### Shot n: start – end`. Flat, because
+  `SectionChunker` makes a chunk per nested section.
 - **`VideoIndex`** puts the pipeline together on Semantic Kernel's in-memory vector store and searches it.
 
 ## Run it
@@ -56,8 +63,8 @@ times and its text.
 
 - MEDI is preview; the sample pins `10.11.0-preview.1.26513.7` (Directory.Packages.props) and may need changes on the
   next one.
-- A shot is the unit: a long shot is one chunk (the chunker splits it only past its token limit). Grouping shots into
-  scenes is the next slice (#3).
+- A shot is the unit unless `--scenes`: a long shot is one chunk (the chunker splits it only past its token limit).
+  Scenes compare neighbours only, so a slow drift (A like B, B like C) can chain into one scene; the cap bounds it.
 - A Whisper segment is a sentence or so; one that spans a cut lands in one shot, the one it overlaps most.
 - AOT and trimming are untested here.
 
