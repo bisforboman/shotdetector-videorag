@@ -7,17 +7,19 @@ docs/decisions/2026-11-01-videorag-repo.md and 2026-10-31-videorag-sample.md, sc
 
 ## Layout
 
-- `src/VideoRag`: `VideoDocumentReader`, `VideoIndex`, `Program` (the console); README.md there explains the design.
+- `src/VideoRag`: `VideoDocumentReader`, `VideoIndex`, `Transcripts.cs` (`Soundtrack` via ManagedCodecs,
+  `WhisperTranscriber`), `Program` (the console); README.md there explains the design.
 - `tests/VideoRag.Tests`: xunit, offline; makes a 3-shot clip with `ffmpeg`.
 - `Directory.Packages.props`: central versions. MEDI is preview and pinned; Dependabot moves it.
 
 ## Working here
 
-- Work on a branch and open a PR, don't push to main; turn auto-merge on once nothing is left to push.
+- Work on a branch and open a PR, don't push to main; squash-merge it once CI is green and nothing is left to push
+  (auto-merge is off in this repository).
 - Before pushing: `dotnet test ShotDetector.VideoRag.slnx` (ffmpeg on PATH; `SHOTDETECTOR_FFMPEG_LIBS` for the stills).
 - Pinned actions: by commit SHA with the tag in a comment. `.github/actions/btbn-ffmpeg` is copied from shotdetector.
-- The next slices are tracked in this repository's issues: transcripts with Whisper.net (#2), shots grouped into
-  scenes (#3), the StanzaSharp chunker once bisforboman/StanzaSharp#233 exists (#4).
+- The next slices are tracked in this repository's issues: shots grouped into scenes (#3), the StanzaSharp chunker
+  once bisforboman/StanzaSharp#233 exists (#4), stills without FFmpeg via ManagedCodecs (#6). Transcripts (#2) are in.
 - Always prompt the owner for input (Claude's AskUserQuestion) before choosing what to do next or between options;
   don't settle open choices in prose.
 - Commit messages: what and why. Small commits.
