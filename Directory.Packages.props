@@ -8,7 +8,7 @@
     <!-- Microsoft.Extensions.DataIngestion is preview and ships monthly: pinned, moved by Dependabot. -->
     <PackageVersion Include="Microsoft.Extensions.DataIngestion" Version="10.11.0-preview.1.26513.7" />
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.11.0" />
-    <PackageVersion Include="Microsoft.ML.Tokenizers.Data.O200kBase" Version="1.0.3" />
+    <PackageVersion Include="Microsoft.ML.Tokenizers.Data.O200kBase" Version="2.0.1" />
     <PackageVersion Include="Microsoft.SemanticKernel.Connectors.InMemory" Version="1.74.0-preview" />
     <!-- Tests. -->
     <PackageVersion Include="GitHubActionsTestLogger" Version="3.0.5" />
