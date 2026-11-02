@@ -19,12 +19,15 @@ public sealed class ThreeShots : IDisposable
         Path = System.IO.Path.Combine(_dir, "three.mp4");
         Silent = System.IO.Path.Combine(_dir, "silent.mp4");
         Mpeg4Part2 = System.IO.Path.Combine(_dir, "part2.mp4");
+        Qc = System.IO.Path.Combine(_dir, "qc.mp4");
         Ffmpeg("-f lavfi -i testsrc2=s=320x240:r=25:d=2 -f lavfi -i smptebars=s=320x240:r=25:d=2 -f lavfi -i mandelbrot=s=320x240:r=25 "
             + "-f lavfi -i sine=frequency=440:sample_rate=48000:duration=6 "
             + "-filter_complex [2]trim=duration=2,setpts=PTS-STARTPTS[m];[0][1][m]concat=n=3:v=1:a=0,format=yuv420p[v] "
             + $"-map [v] -map 3:a -r 25 -c:v libx264 -crf 18 -g 25 -c:a aac -ac 2 -b:a 128k {Path}");
         Ffmpeg($"-i {Path} -map 0:v -c copy {Silent}");
         Ffmpeg($"-i {Path} -map 0:v -c:v mpeg4 -q:v 3 {Mpeg4Part2}");
+        Ffmpeg("-f lavfi -i testsrc2=s=320x240:r=25:d=2 -f lavfi -i color=c=black:s=320x240:r=25:d=3 -f lavfi -i smptebars=s=320x240:r=25:d=4 "
+            + $"-filter_complex [0][1][2]concat=n=3:v=1:a=0,format=yuv420p -c:v libx264 -crf 18 -g 25 {Qc}");
     }
 
     public string Path { get; }
@@ -32,6 +35,9 @@ public sealed class ThreeShots : IDisposable
     public string Silent { get; }
 
     public string Mpeg4Part2 { get; }
+
+    /// <summary>2 s of a moving test card, 3 s of black, 4 s of still colour bars (a still picture to the end).</summary>
+    public string Qc { get; }
 
     static void Ffmpeg(string arguments)
     {
@@ -52,7 +58,11 @@ public sealed class VideoRagTests(ThreeShots clip) : IClassFixture<ThreeShots>
     /// <summary>FFmpeg 8's libraries, as the other tests take them: set on CI, so the stills are checked there.</summary>
     static readonly string? Libraries = Environment.GetEnvironmentVariable("SHOTDETECTOR_FFMPEG_LIBS") is { Length: > 0 } dir ? dir : null;
 
-    internal static VideoDocumentReaderOptions Options => new() { FfmpegLibraries = Libraries };
+    /// <summary>
+    /// The reader's options for these tests: QC off, since the clip's 2 s of still colour bars are a still picture to
+    /// FFmpeg 8's freezedetect (and to no older ffmpeg); the QC tests turn it on.
+    /// </summary>
+    internal static VideoDocumentReaderOptions Options => new() { FfmpegLibraries = Libraries, Qc = false };
 
     [Fact]
     public async Task ReaderMakesASectionPerShotHeadedByItsTimes()
@@ -260,6 +270,63 @@ public sealed class VideoRagTests(ThreeShots clip) : IClassFixture<ThreeShots>
         Assert.Equal(9, expected.Count);
         Assert.Equal(expected.Select(e => e.Item1), Stills(many).Select(e => e.Item1));
         Assert.All(expected.Zip(Stills(many)), pair => Assert.Equal(pair.First.Item2, pair.Second.Item2));
+    }
+
+    [Theory]
+    [InlineData(0, 10, 0, 9, true)] // 90%: black
+    [InlineData(0, 10, 0, 8.9, false)]
+    [InlineData(2, 5, 1, 6, true)] // a span past both ends
+    [InlineData(0, 10, 20, 30, false)]
+    public void ShotsAtLeastNinetyPercentBlackAreBlack(double start, double end, double blackStart, double blackEnd, bool black) =>
+        Assert.Equal(black, VideoDocumentReader.IsBlack(start, end, [(blackStart, blackEnd)]));
+
+    [Fact]
+    public void FreezesAreClippedToTheShotAndAtLeastASecondOfIt()
+    {
+        (double, double)[] frozen = [(0, 5.5), (6, 6.8), (8, double.PositiveInfinity)];
+        Assert.Equal([(8.0, 10.0)], VideoDocumentReader.FreezesIn(5, 10, frozen)); // 0.5 s and 0.8 s of the shot are too little
+    }
+
+    [Fact]
+    public void StillsInOneFreezeCollapseToTheFirstAndBlackShotsHaveNone()
+    {
+        var every = TimeSpan.FromSeconds(1);
+        // A 6 s shot at 1 s intervals: stills at 0.5 ... 5.5; a freeze from 2 to 5 keeps 2.5 and drops 3.5 and 4.5.
+        Assert.Equal([0.5, 1.5, 2.5, 5.5], VideoDocumentReader.PlannedStills(0, 6, every, black: false, [(2, 5)]));
+        Assert.Equal([0.5, 1.5, 2.5, 3.5, 4.5, 5.5], VideoDocumentReader.PlannedStills(0, 6, every, black: false, []));
+        Assert.Empty(VideoDocumentReader.PlannedStills(0, 6, every, black: true, []));
+    }
+
+    [Fact]
+    public async Task BlackShotsSaySoAndStillPicturesGetOneStill()
+    {
+        var reader = new VideoDocumentReader(Options with { StillInterval = TimeSpan.FromSeconds(1), Qc = true });
+        var document = await reader.ReadAsync(new FileInfo(clip.Qc), "qc.mp4");
+
+        Assert.Equal(["## 00:00:00.000 – 00:00:02.000", "## 00:00:02.000 – 00:00:05.000", "## 00:00:05.000 – 00:00:09.000"],
+            document.Sections.Select(s => s.Elements[0].GetMarkdown()));
+        Assert.Equal(2, document.Sections[0].Elements.Count(e => e is IngestionDocumentImage));
+        var black = document.Sections[1].Elements;
+        Assert.Contains(black, e => e.GetMarkdown() == VideoDocumentReader.BlackScreen);
+        Assert.DoesNotContain(black, e => e is IngestionDocumentImage);
+
+        // freezedetect needs FFmpeg 8: the libraries (CI sets them) or an ffmpeg 8 executable. An older ffmpeg on PATH
+        // reports no still pictures, and the bars then get a still a second.
+        if (!reader.DetectsInProcess)
+            return;
+        var bars = document.Sections[2].Elements;
+        Assert.Contains(bars, e => e.GetMarkdown() == "Still picture from 00:00:05.000 to 00:00:09.000.");
+        Assert.Single(bars, e => e is IngestionDocumentImage);
+    }
+
+    [Fact]
+    public async Task WithoutQcEveryShotGetsItsStills()
+    {
+        var document = await new VideoDocumentReader(Options with { StillInterval = TimeSpan.FromSeconds(1), Qc = false })
+            .ReadAsync(new FileInfo(clip.Qc), "qc.mp4");
+
+        Assert.Equal([2, 3, 4], document.Sections.Select(s => s.Elements.Count(e => e is IngestionDocumentImage)));
+        Assert.DoesNotContain(document.Sections.SelectMany(s => s.Elements), e => e.GetMarkdown() == VideoDocumentReader.BlackScreen);
     }
 
     [Fact]

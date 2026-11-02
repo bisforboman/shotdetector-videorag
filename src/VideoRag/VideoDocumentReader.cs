@@ -44,6 +44,13 @@ public sealed record VideoDocumentReaderOptions
     /// or a dissolve the detector doesn't cut at leaves one long "shot" over several scenes. Null: the middle only.
     /// </summary>
     public TimeSpan? StillInterval { get; init; } = TimeSpan.FromSeconds(8);
+
+    /// <summary>
+    /// Whether to look for black and still pictures on the detection pass (ShotDetector's blackdetect and freezedetect,
+    /// ffmpeg's defaults: spans of 2 s or more; true by default). A shot at least 90% black says "Black screen." and gets
+    /// no stills; a still picture in a shot says "Still picture from A to B." and gets one still, however long it is.
+    /// </summary>
+    public bool Qc { get; init; } = true;
 }
 
 /// <summary>
@@ -100,14 +107,70 @@ public sealed class VideoDocumentReader(VideoDocumentReaderOptions? options = nu
     async Task<IngestionDocument> ReadPathAsync(string path, string identifier, CancellationToken cancellationToken)
     {
         _ = DetectsInProcess; // loads the libraries first, so detection decodes in-process when it can
-        var result = await ShotDetection.DetectAsync(path, _options.Detection, cancellationToken).ConfigureAwait(false);
+        var detection = _options.Qc
+            ? (_options.Detection ?? new DetectionOptions()) with { BlackDetect = new BlackDetectOptions(), FreezeDetect = new FreezeDetectOptions() }
+            : _options.Detection;
+        var result = await ShotDetection.DetectAsync(path, detection, cancellationToken).ConfigureAwait(false);
         var document = new IngestionDocument(identifier);
+        var black = (result.BlackSpans ?? []).Select(b => (b.Start, b.End)).ToList();
+        var frozen = (result.FreezeSpans ?? []).Select(f => (f.Start, End: f.End ?? double.PositiveInfinity)).ToList();
+        var looks = new List<(bool Black, IReadOnlyList<(double Start, double End)> Freezes)>();
         foreach (var shot in result.Shots)
-            document.Sections.Add(Section(shot, result.Shots.Count));
+        {
+            var section = Section(shot, result.Shots.Count);
+            bool isBlack = IsBlack(shot.Start.Seconds, shot.End.Seconds, black);
+            var freezes = isBlack ? [] : FreezesIn(shot.Start.Seconds, shot.End.Seconds, frozen);
+            if (isBlack)
+                section.Elements.Add(Tagged(new IngestionDocumentParagraph(BlackScreen), shot));
+            foreach (var (from, to) in freezes)
+                section.Elements.Add(Tagged(new IngestionDocumentParagraph($"Still picture from {Timecode(TimeSpan.FromSeconds(from))} to {Timecode(TimeSpan.FromSeconds(to))}."), shot));
+            document.Sections.Add(section);
+            looks.Add((isBlack, freezes));
+        }
         if (_options.Transcriber is { } transcriber)
             await AddTranscriptsAsync(path, transcriber, _options.KeepSoundTags, result.Shots, document, cancellationToken).ConfigureAwait(false);
-        await Task.Run(() => AddStills(path, result.Shots, document, cancellationToken), cancellationToken).ConfigureAwait(false);
+        await Task.Run(() => AddStills(path, result.Shots, looks, document, cancellationToken), cancellationToken).ConfigureAwait(false);
         return document;
+    }
+
+    /// <summary>The paragraph of a shot that is (almost) all black.</summary>
+    public const string BlackScreen = "Black screen.";
+
+    /// <summary>Whether at least 90% of the shot from <paramref name="start"/> to <paramref name="end"/> is inside black spans.</summary>
+    internal static bool IsBlack(double start, double end, IReadOnlyList<(double Start, double End)> black)
+    {
+        double covered = black.Sum(b => Math.Max(0, Math.Min(end, b.End) - Math.Max(start, b.Start)));
+        return end > start && covered >= 0.9 * (end - start);
+    }
+
+    /// <summary>The still pictures in a shot, clipped to it, each at least 1 s of it (a freeze that only grazes a shot isn't its).</summary>
+    internal static IReadOnlyList<(double Start, double End)> FreezesIn(double start, double end, IReadOnlyList<(double Start, double End)> frozen) =>
+        [.. frozen.Select(f => (Start: Math.Max(start, f.Start), End: Math.Min(end, f.End))).Where(f => f.End - f.Start >= 1)];
+
+    /// <summary>
+    /// The still times of a shot (<see cref="StillTimes"/>) with those inside one freeze collapsed to the first, and none
+    /// for a black shot.
+    /// </summary>
+    internal static IReadOnlyList<double> PlannedStills(double start, double duration, TimeSpan? interval, bool black, IReadOnlyList<(double Start, double End)> freezes)
+    {
+        if (black)
+            return [];
+        var taken = new HashSet<int>();
+        var times = new List<double>();
+        foreach (double t in StillTimes(start, duration, interval))
+        {
+            int freeze = -1;
+            for (int f = 0; f < freezes.Count; f++)
+            {
+                if (t >= freezes[f].Start && t < freezes[f].End)
+                    freeze = f;
+            }
+
+            if (freeze < 0 || taken.Add(freeze))
+                times.Add(t);
+        }
+
+        return times;
     }
 
     /// <summary>The header every chunk of a shot gets as its context.</summary>
@@ -184,13 +247,13 @@ public sealed class VideoDocumentReader(VideoDocumentReaderOptions? options = nu
     /// time (as ffmpeg's -ss takes it), upright, at most <see cref="VideoDocumentReaderOptions.StillMaxWidth"/> wide, as
     /// a JPEG. MP4 and AVI with H.264 or MJPEG; any other file gets no stills.
     /// </summary>
-    void AddStills(string path, IReadOnlyList<Shot> shots, IngestionDocument document, CancellationToken cancellationToken)
+    void AddStills(string path, IReadOnlyList<Shot> shots, IReadOnlyList<(bool Black, IReadOnlyList<(double Start, double End)> Freezes)> looks, IngestionDocument document, CancellationToken cancellationToken)
     {
         // Every still, in document order: (section, shot, time, file name).
         var stills = new List<(int Section, Shot Shot, TimeSpan At, string Name)>();
         for (int i = 0; i < shots.Count; i++)
         {
-            var times = StillTimes(shots[i].Start.Seconds, shots[i].Duration.Seconds, _options.StillInterval);
+            var times = PlannedStills(shots[i].Start.Seconds, shots[i].Duration.Seconds, _options.StillInterval, looks[i].Black, looks[i].Freezes);
             for (int k = 0; k < times.Count; k++)
             {
                 string name = times.Count == 1 ? $"shot-{shots[i].Number}.jpg" : $"shot-{shots[i].Number}-{k + 1}.jpg";
