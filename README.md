@@ -17,8 +17,8 @@ uses: [src/VideoRag/README.md](src/VideoRag/README.md).
 
 ## Checks
 
-`dotnet test ShotDetector.VideoRag.slnx` needs `ffmpeg` on PATH. With `SHOTDETECTOR_FFMPEG_LIBS` set to a folder of
-FFmpeg 8's shared libraries, it also checks the stills; CI sets it.
+`dotnet test ShotDetector.VideoRag.slnx` needs `ffmpeg` (with libx264) on PATH to make the test clip. With
+`SHOTDETECTOR_FFMPEG_LIBS` set to a folder of FFmpeg 8's shared libraries, detection also runs in-process; CI sets it.
 
 ## History
 

@@ -11,13 +11,16 @@ video ──VideoDocumentReader──► one section per shot ──ImageAlterna
 ```
 
 - **`VideoDocumentReader`** (an `IngestionDocumentReader`) detects the shots with `ShotDetection.DetectAsync` and makes
-  one `IngestionDocumentSection` per shot: a header `## 00:00:02.000 – 00:00:04.000`, a paragraph naming the shot, and,
-  when FFmpeg 8's shared libraries load, the shot's middle frame as a JPEG (FrameReader's `ImageEncoder`, at most
-  640 px wide) with no alternative text yet; a shot longer than 8 s (`StillInterval`, `--still-every`) gets a still in
+  one `IngestionDocumentSection` per shot: a header `## 00:00:02.000 – 00:00:04.000`, a paragraph naming the shot, and
+  the shot's middle frame as a JPEG (at most 640 px wide, quality 85) with no alternative text yet. The stills are
+  decoded and encoded in managed code by [ManagedCodecs.Thumbnails](https://github.com/bisforboman/ManagedCodecs)
+  (`VideoThumbnail`, `Thumbnail.ToJpeg`): MP4 and AVI with H.264 or MJPEG, no FFmpeg; any other file (MKV, WebM,
+  HEVC, MPEG-4 Part 2, ...) gets sections without stills. Each still reopens the file and decodes from the keyframe
+  before it, about 0.3 s a still on Sintel's 480p trailer. A shot longer than 8 s (`StillInterval`, `--still-every`) gets a still in
   the middle of each 8 s or shorter stretch instead, since a fade or a dissolve the detector doesn't cut at leaves one
   long "shot" over several scenes (Sintel's trailer: two of 14 and 24 s). `--detector` picks ShotDetector's detectors,
-  comma-separated to run several (`content,threshold` also cuts at fades to black: 20 shots there instead of 10). Each element's metadata has the shot's number and its start and end in
-  seconds. A `Stream` that isn't a file's is copied to a temporary file first, since the stills seek.
+  comma-separated to run several (`content,threshold` also cuts at fades to black: 20 shots there instead of 10). Each
+  element's metadata has the shot's number and its start and end in seconds. A `Stream` that isn't a file's is copied to a temporary file first, since the stills seek.
 - **Transcripts**: with an `ITranscriber` (`WhisperTranscriber`: whisper.cpp through Whisper.net, a ggml model file)
   each shot also gets a paragraph `Said: …` of the speech in it; a segment goes to the shot it overlaps most. Sound
   annotations (`[MUSIC PLAYING]`, `(laughs)`, ♪) are removed from any transcriber's text, so a shot with only music
@@ -58,8 +61,8 @@ times and its text.
 
 - **FFmpeg**: `--ffmpeg-libs` (or `SHOTDETECTOR_FFMPEG_LIBS`) names a folder with FFmpeg 8's shared libraries: an
   FFmpeg 8 "shared" build, or the ones in the [FrameReader.Native](https://github.com/bisforboman/shotdetector/blob/main/src/FrameReader.Native/README.md) packages
-  (LGPL-2.1-or-later; the sample doesn't reference them). Without them the shots still become sections, with no stills,
-  and detection runs through the `ffmpeg` executable on PATH.
+  (LGPL-2.1-or-later; the sample doesn't reference them). With them detection decodes in-process; without them it runs
+  through the `ffmpeg` executable on PATH. The stills and the transcripts don't need FFmpeg at all.
 - **Whisper**: `--whisper-model` (or `VIDEORAG_WHISPER_MODEL`) names a ggml model file, e.g. `ggml-base.en.bin` from
   [whisper.cpp's models](https://huggingface.co/ggerganov/whisper.cpp). Nothing is downloaded; without one, no
   transcripts. The language is detected.
