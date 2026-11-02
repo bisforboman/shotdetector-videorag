@@ -23,6 +23,9 @@ public sealed record VideoDocumentReaderOptions
     /// <summary>The stills' JPEG quality, 1 to 100 (libjpeg's scale).</summary>
     public int StillQuality { get; init; } = 85;
 
+    /// <summary>How many stills are decoded at once; null: one per processor.</summary>
+    public int? StillThreads { get; init; }
+
     /// <summary>
     /// Speech to text for the soundtrack (e.g. <see cref="WhisperTranscriber"/>): each shot gets a paragraph of what's
     /// said in it. The soundtrack is decoded by ManagedCodecs (AAC in MP4 or ADTS); null, or other audio: no transcripts.
@@ -183,34 +186,51 @@ public sealed class VideoDocumentReader(VideoDocumentReaderOptions? options = nu
     /// </summary>
     void AddStills(string path, IReadOnlyList<Shot> shots, IngestionDocument document, CancellationToken cancellationToken)
     {
-        using var file = File.OpenRead(path);
+        // Every still, in document order: (section, shot, time, file name).
+        var stills = new List<(int Section, Shot Shot, TimeSpan At, string Name)>();
         for (int i = 0; i < shots.Count; i++)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var shot = shots[i];
-            var times = StillTimes(shot.Start.Seconds, shot.Duration.Seconds, _options.StillInterval);
+            var times = StillTimes(shots[i].Start.Seconds, shots[i].Duration.Seconds, _options.StillInterval);
             for (int k = 0; k < times.Count; k++)
             {
-                var at = TimeSpan.FromSeconds(times[k]);
-                Thumbnail still;
-                try
-                {
-                    file.Position = 0;
-                    still = VideoThumbnail.Create(file, new ThumbnailOptions { At = at, MaxWidth = _options.StillMaxWidth, MaxHeight = int.MaxValue }, cancellationToken);
-                }
-                catch (Exception e) when (e is NotSupportedException or InvalidDataException)
-                {
-                    return; // a container or codec ManagedCodecs doesn't read (MKV, HEVC, MPEG-4 Part 2, ...): no stills
-                }
-
-                string name = times.Count == 1 ? $"shot-{shot.Number}.jpg" : $"shot-{shot.Number}-{k + 1}.jpg";
-                document.Sections[i].Elements.Add(Tagged(new IngestionDocumentImage($"![Shot {shot.Number} at {Timecode(at)}]({name})")
-                {
-                    Content = still.ToJpeg(_options.StillQuality),
-                    MediaType = "image/jpeg",
-                },
-                    shot));
+                string name = times.Count == 1 ? $"shot-{shots[i].Number}.jpg" : $"shot-{shots[i].Number}-{k + 1}.jpg";
+                stills.Add((i, shots[i], TimeSpan.FromSeconds(times[k]), name));
             }
+        }
+
+        // Each still decodes from the keyframe before it (most of its time: GOPs are often seconds long) and doesn't
+        // depend on the others, so they run in parallel, each worker with its own stream.
+        var jpegs = new byte[stills.Count][];
+        bool unreadable = false;
+        var parallel = new ParallelOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = _options.StillThreads ?? Environment.ProcessorCount };
+        Parallel.For(0, stills.Count, parallel, () => File.OpenRead(path), (j, loop, file) =>
+        {
+            try
+            {
+                file.Position = 0;
+                var options = new ThumbnailOptions { At = stills[j].At, MaxWidth = _options.StillMaxWidth, MaxHeight = int.MaxValue };
+                jpegs[j] = VideoThumbnail.Create(file, options, cancellationToken).ToJpeg(_options.StillQuality);
+            }
+            catch (Exception e) when (e is NotSupportedException or InvalidDataException)
+            {
+                unreadable = true; // a container or codec ManagedCodecs doesn't read (MKV, HEVC, MPEG-4 Part 2, ...)
+                loop.Stop();
+            }
+
+            return file;
+        }, file => file.Dispose());
+        if (unreadable)
+            return; // no stills rather than some
+
+        for (int j = 0; j < stills.Count; j++)
+        {
+            var (section, shot, at, name) = stills[j];
+            document.Sections[section].Elements.Add(Tagged(new IngestionDocumentImage($"![Shot {shot.Number} at {Timecode(at)}]({name})")
+            {
+                Content = jpegs[j],
+                MediaType = "image/jpeg",
+            },
+                shot));
         }
     }
 
