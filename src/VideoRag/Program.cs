@@ -1,7 +1,7 @@
 // Video RAG with Microsoft.Extensions.DataIngestion (README.md): videos in, one chunk per shot in an
 // in-memory vector store, answers with the shot's times.
 //
-//   dotnet run --project src/VideoRag -- [--ffmpeg-libs <dir>] [--detector adaptive|content|threshold|histogram|hash[,...]] [--still-every 8] [--whisper-model <ggml file> [--keep-sound-tags]] [--scenes [--scene-threshold 0.6] [--scene-max 60]] [--sentences <stanza model dir>] [--entities <stanza model dir> [--entity NAME]] [--stanza-lang en] [--ask "question"]... <video>...
+//   dotnet run --project src/VideoRag -- [--ffmpeg-libs <dir>] [--detector adaptive|content|threshold|histogram|hash[,...]] [--still-every 8] [--no-qc] [--whisper-model <ggml file> [--keep-sound-tags]] [--scenes [--scene-threshold 0.6] [--scene-max 60]] [--sentences <stanza model dir>] [--entities <stanza model dir> [--entity NAME]] [--stanza-lang en] [--ask "question"]... <video>...
 //
 // --entities stores each chunk's named entities (people, organizations, places, ...: StanzaSharp's EntityEnricher on
 // Stanza's default_fast ner, `stanzasharp download models/stanza/en --package default_fast --processors tokenize,ner`
@@ -18,7 +18,8 @@
 // --detector picks ShotDetector's detectors (default adaptive; several, comma-separated, run together: content,threshold
 // also cuts at fades to black). --still-every N takes a still per N seconds of a long shot (default 8; 0: the middle
 // only), since a dissolve the detector doesn't cut at leaves one shot over several scenes. --keep-sound-tags keeps the
-// transcript's [MUSIC], (laughs) and ♪, which are removed by default.
+// transcript's [MUSIC], (laughs) and ♪, which are removed by default. Black and still pictures are found on the
+// detection pass: a black shot says so and gets no stills, a still picture gets one; --no-qc turns that off.
 //
 // With a Whisper model (--whisper-model or VIDEORAG_WHISPER_MODEL, a ggml file such as ggml-base.en.bin) each shot
 // also gets what's said in it; the soundtrack is decoded in managed code (AAC in MP4 or ADTS).
@@ -37,6 +38,7 @@ SceneGrouperOptions? scenes = null;
 ShotDetector.DetectionOptions? detection = null;
 TimeSpan? stillInterval = TimeSpan.FromSeconds(8);
 bool keepSoundTags = false;
+bool qc = true;
 string? sentencesDir = null;
 string sentencesLang = "en";
 string? entitiesDir = null;
@@ -60,6 +62,9 @@ for (int i = 0; i < args.Length; i++)
         case "--still-every" when i + 1 < args.Length:
             double every = double.Parse(args[++i], CultureInfo.InvariantCulture);
             stillInterval = every > 0 ? TimeSpan.FromSeconds(every) : null;
+            break;
+        case "--no-qc":
+            qc = false;
             break;
         case "--keep-sound-tags":
             keepSoundTags = true;
@@ -99,7 +104,7 @@ for (int i = 0; i < args.Length; i++)
 
 if (videos.Count == 0)
 {
-    Console.Error.WriteLine("Usage: VideoRag [--ffmpeg-libs <dir>] [--detector adaptive|content|threshold|histogram|hash[,...]] [--still-every 8] [--whisper-model <ggml file> [--keep-sound-tags]] [--scenes [--scene-threshold 0.6] [--scene-max 60]] [--sentences <stanza model dir>] [--entities <stanza model dir> [--entity NAME]] [--stanza-lang en] [--ask \"question\"]... <video>...");
+    Console.Error.WriteLine("Usage: VideoRag [--ffmpeg-libs <dir>] [--detector adaptive|content|threshold|histogram|hash[,...]] [--still-every 8] [--no-qc] [--whisper-model <ggml file> [--keep-sound-tags]] [--scenes [--scene-threshold 0.6] [--scene-max 60]] [--sentences <stanza model dir>] [--entities <stanza model dir> [--entity NAME]] [--stanza-lang en] [--ask \"question\"]... <video>...");
     return 2;
 }
 
@@ -130,6 +135,7 @@ var options = new VideoDocumentReaderOptions
     StillInterval = stillInterval,
     Transcriber = transcriber,
     KeepSoundTags = keepSoundTags,
+    Qc = qc,
 };
 if (!new VideoDocumentReader(options).DetectsInProcess)
     Console.Error.WriteLine("FFmpeg 8's shared libraries didn't load (--ffmpeg-libs): detection through ffmpeg on PATH.");
