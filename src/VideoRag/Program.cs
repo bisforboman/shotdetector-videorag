@@ -131,8 +131,8 @@ var options = new VideoDocumentReaderOptions
     Transcriber = transcriber,
     KeepSoundTags = keepSoundTags,
 };
-if (!new VideoDocumentReader(options).HasStills)
-    Console.Error.WriteLine("FFmpeg 8's shared libraries didn't load (--ffmpeg-libs): shots without stills, detection through ffmpeg on PATH.");
+if (!new VideoDocumentReader(options).DetectsInProcess)
+    Console.Error.WriteLine("FFmpeg 8's shared libraries didn't load (--ffmpeg-libs): detection through ffmpeg on PATH.");
 
 if (entity is not null && entitiesDir is null)
 {

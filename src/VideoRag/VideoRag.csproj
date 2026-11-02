@@ -21,6 +21,7 @@
     <PackageReference Include="ShotDetector" />
     <PackageReference Include="ManagedCodecs.Aac" />
     <PackageReference Include="ManagedCodecs.Containers" />
+    <PackageReference Include="ManagedCodecs.Thumbnails" />
     <PackageReference Include="Whisper.net" />
     <PackageReference Include="Whisper.net.Runtime" />
     <PackageReference Include="StanzaSharp.DataIngestion" />

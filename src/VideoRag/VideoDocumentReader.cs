@@ -1,4 +1,4 @@
-using FrameReader;
+using ManagedCodecs.Thumbnails;
 using Microsoft.Extensions.DataIngestion;
 using ShotDetector;
 
@@ -11,14 +11,17 @@ public sealed record VideoDocumentReaderOptions
     public DetectionOptions? Detection { get; init; }
 
     /// <summary>
-    /// Folder of FFmpeg 8's shared libraries (an FFmpeg 8 "shared" build, or FrameReader.Native's): with them each shot
-    /// gets its middle frame as a JPEG, and detection decodes in-process. Null: the usual places, else no stills (and
-    /// detection through the ffmpeg executable on PATH).
+    /// Folder of FFmpeg 8's shared libraries (an FFmpeg 8 "shared" build, or FrameReader.Native's): with them detection
+    /// decodes in-process. Null: the usual places, else detection runs through the ffmpeg executable on PATH. The stills
+    /// don't need them.
     /// </summary>
     public string? FfmpegLibraries { get; init; }
 
     /// <summary>The stills' largest width, in pixels; narrower videos keep their own.</summary>
     public int StillMaxWidth { get; init; } = 640;
+
+    /// <summary>The stills' JPEG quality, 1 to 100 (libjpeg's scale).</summary>
+    public int StillQuality { get; init; } = 85;
 
     /// <summary>
     /// Speech to text for the soundtrack (e.g. <see cref="WhisperTranscriber"/>): each shot gets a paragraph of what's
@@ -62,8 +65,8 @@ public sealed class VideoDocumentReader(VideoDocumentReaderOptions? options = nu
 
     readonly VideoDocumentReaderOptions _options = options ?? new();
 
-    /// <summary>Whether this reader's sections get stills (FFmpeg's libraries load).</summary>
-    public bool HasStills => global::FrameReader.FFmpegLibraries.CanLoad(_options.FfmpegLibraries);
+    /// <summary>Whether detection decodes in-process (FFmpeg's libraries load), not through the ffmpeg executable.</summary>
+    public bool DetectsInProcess => global::FrameReader.FFmpegLibraries.CanLoad(_options.FfmpegLibraries);
 
     /// <summary>A video file: detection and stills seek in it.</summary>
     public override Task<IngestionDocument> ReadAsync(FileInfo source, string identifier, string? mediaType = null, CancellationToken cancellationToken = default)
@@ -93,15 +96,14 @@ public sealed class VideoDocumentReader(VideoDocumentReaderOptions? options = nu
 
     async Task<IngestionDocument> ReadPathAsync(string path, string identifier, CancellationToken cancellationToken)
     {
-        bool stills = HasStills; // loads the libraries first, so detection decodes in-process too
+        _ = DetectsInProcess; // loads the libraries first, so detection decodes in-process when it can
         var result = await ShotDetection.DetectAsync(path, _options.Detection, cancellationToken).ConfigureAwait(false);
         var document = new IngestionDocument(identifier);
         foreach (var shot in result.Shots)
             document.Sections.Add(Section(shot, result.Shots.Count));
         if (_options.Transcriber is { } transcriber)
             await AddTranscriptsAsync(path, transcriber, _options.KeepSoundTags, result.Shots, document, cancellationToken).ConfigureAwait(false);
-        if (stills)
-            await Task.Run(() => AddStills(path, result.Shots, document, cancellationToken), cancellationToken).ConfigureAwait(false);
+        await Task.Run(() => AddStills(path, result.Shots, document, cancellationToken), cancellationToken).ConfigureAwait(false);
         return document;
     }
 
@@ -174,11 +176,14 @@ public sealed class VideoDocumentReader(VideoDocumentReaderOptions? options = nu
         return best;
     }
 
+    /// <summary>
+    /// Each shot's stills, decoded and encoded in managed code by ManagedCodecs.Thumbnails: the frame shown at each
+    /// time (as ffmpeg's -ss takes it), upright, at most <see cref="VideoDocumentReaderOptions.StillMaxWidth"/> wide, as
+    /// a JPEG. MP4 and AVI with H.264 or MJPEG; any other file gets no stills.
+    /// </summary>
     void AddStills(string path, IReadOnlyList<Shot> shots, IngestionDocument document, CancellationToken cancellationToken)
     {
-        using var reader = new VideoFrameReader(path);
-        using var encoder = new ImageEncoder(new ImageEncoderOptions { Format = ImageFormat.Jpg });
-        var size = new ImageFilterOptions { MaxWidth = _options.StillMaxWidth };
+        using var file = File.OpenRead(path);
         for (int i = 0; i < shots.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -187,18 +192,24 @@ public sealed class VideoDocumentReader(VideoDocumentReaderOptions? options = nu
             for (int k = 0; k < times.Count; k++)
             {
                 var at = TimeSpan.FromSeconds(times[k]);
-                if (!reader.TryTakeAt(at, out var frame))
-                    continue;
-                using (frame)
+                Thumbnail still;
+                try
                 {
-                    string file = times.Count == 1 ? $"shot-{shot.Number}.jpg" : $"shot-{shot.Number}-{k + 1}.jpg";
-                    document.Sections[i].Elements.Add(Tagged(new IngestionDocumentImage($"![Shot {shot.Number} at {Timecode(at)}]({file})")
-                    {
-                        Content = encoder.Encode(frame, size),
-                        MediaType = "image/jpeg",
-                    },
-                        shot));
+                    file.Position = 0;
+                    still = VideoThumbnail.Create(file, new ThumbnailOptions { At = at, MaxWidth = _options.StillMaxWidth, MaxHeight = int.MaxValue }, cancellationToken);
                 }
+                catch (Exception e) when (e is NotSupportedException or InvalidDataException)
+                {
+                    return; // a container or codec ManagedCodecs doesn't read (MKV, HEVC, MPEG-4 Part 2, ...): no stills
+                }
+
+                string name = times.Count == 1 ? $"shot-{shot.Number}.jpg" : $"shot-{shot.Number}-{k + 1}.jpg";
+                document.Sections[i].Elements.Add(Tagged(new IngestionDocumentImage($"![Shot {shot.Number} at {Timecode(at)}]({name})")
+                {
+                    Content = still.ToJpeg(_options.StillQuality),
+                    MediaType = "image/jpeg",
+                },
+                    shot));
             }
         }
     }
