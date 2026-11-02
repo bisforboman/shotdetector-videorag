@@ -7,7 +7,8 @@ namespace VideoRag.Tests;
 
 /// <summary>
 /// Three shots, cuts at frames 50 and 100 (150 frames at 25 fps), as ShotDetector.Tests' Clips.ThreeShots; with a
-/// soundtrack, a 440 Hz tone in stereo AAC at 48 kHz, and a second copy with no audio.
+/// soundtrack, a 440 Hz tone in stereo AAC at 48 kHz; H.264, so ManagedCodecs decodes the stills. Also a copy with no
+/// audio, and one in MPEG-4 Part 2, a codec ManagedCodecs doesn't decode.
 /// </summary>
 public sealed class ThreeShots : IDisposable
 {
@@ -17,16 +18,20 @@ public sealed class ThreeShots : IDisposable
     {
         Path = System.IO.Path.Combine(_dir, "three.mp4");
         Silent = System.IO.Path.Combine(_dir, "silent.mp4");
+        Mpeg4Part2 = System.IO.Path.Combine(_dir, "part2.mp4");
         Ffmpeg("-f lavfi -i testsrc2=s=320x240:r=25:d=2 -f lavfi -i smptebars=s=320x240:r=25:d=2 -f lavfi -i mandelbrot=s=320x240:r=25 "
             + "-f lavfi -i sine=frequency=440:sample_rate=48000:duration=6 "
             + "-filter_complex [2]trim=duration=2,setpts=PTS-STARTPTS[m];[0][1][m]concat=n=3:v=1:a=0,format=yuv420p[v] "
-            + $"-map [v] -map 3:a -r 25 -c:v mpeg4 -q:v 3 -c:a aac -ac 2 -b:a 128k {Path}");
+            + $"-map [v] -map 3:a -r 25 -c:v libx264 -crf 18 -g 25 -c:a aac -ac 2 -b:a 128k {Path}");
         Ffmpeg($"-i {Path} -map 0:v -c copy {Silent}");
+        Ffmpeg($"-i {Path} -map 0:v -c:v mpeg4 -q:v 3 {Mpeg4Part2}");
     }
 
     public string Path { get; }
 
     public string Silent { get; }
+
+    public string Mpeg4Part2 { get; }
 
     static void Ffmpeg(string arguments)
     {
@@ -68,9 +73,7 @@ public sealed class VideoRagTests(ThreeShots clip) : IClassFixture<ThreeShots>
         }
 
         if (Libraries is not null)
-            Assert.True(reader.HasStills, $"FFmpeg's libraries didn't load from {Libraries}");
-        if (!reader.HasStills)
-            return;
+            Assert.True(reader.DetectsInProcess, $"FFmpeg's libraries didn't load from {Libraries}");
         foreach (var section in document.Sections)
         {
             var image = Assert.IsType<IngestionDocumentImage>(Assert.Single(section.Elements, e => e is IngestionDocumentImage));
@@ -102,9 +105,6 @@ public sealed class VideoRagTests(ThreeShots clip) : IClassFixture<ThreeShots>
 
         var hits = await index.SearchAsync("shot", top: 10);
         Assert.Equal(Headers.Select(h => $"## {h}"), hits.Select(h => h.Context).Order(StringComparer.Ordinal));
-        if (!new VideoDocumentReader(Options).HasStills)
-            return;
-
         // The enricher sent the three stills in one request and its captions became the chunks' text.
         Assert.Equal(1, chat.Requests);
         Assert.Equal(3, chat.Images);
@@ -222,8 +222,6 @@ public sealed class VideoRagTests(ThreeShots clip) : IClassFixture<ThreeShots>
     {
         var reader = new VideoDocumentReader(Options with { StillInterval = TimeSpan.FromSeconds(0.8) });
         var document = await reader.ReadAsync(new FileInfo(clip.Path), "three.mp4");
-        if (!reader.HasStills)
-            return;
 
         // Each 2-second shot: three stretches of 2/3 s, stills at 1/3, 1 and 5/3 s into it (timecodes truncate to ms).
         foreach (var (section, i) in document.Sections.Select((s, i) => (s, i)))
@@ -234,6 +232,26 @@ public sealed class VideoRagTests(ThreeShots clip) : IClassFixture<ThreeShots>
                 [$"![Shot {i + 1} at 00:00:0{(i * 2) + 0}.333](shot-{i + 1}-1.jpg)", $"![Shot {i + 1} at 00:00:0{(i * 2) + 1}.000](shot-{i + 1}-2.jpg)", $"![Shot {i + 1} at 00:00:0{(i * 2) + 1}.666](shot-{i + 1}-3.jpg)"],
                 images.Select(m => m.GetMarkdown()));
         }
+    }
+
+    [Fact]
+    public async Task StillsAreTheFramesAtTheirTimes()
+    {
+        // Shot 2 is SMPTE colour bars: its still's top-left area is the first bar, light grey (75% white).
+        var document = await new VideoDocumentReader(Options).ReadAsync(new FileInfo(clip.Path), "three.mp4");
+        var image = document.Sections[1].Elements.OfType<IngestionDocumentImage>().Single();
+        using var frame = new ManagedCodecs.Mjpeg.MjpegDecoder().Decode(image.Content!.Value.Span);
+        Assert.Equal((320, 240), (frame.Width, frame.Height));
+        Assert.InRange(frame.GetRow(0, 20)[10], 170, 200); // luma of 75% white, full range: about 191
+    }
+
+    [Fact]
+    public async Task AVideoManagedCodecsDoesNotDecodeHasNoStills()
+    {
+        var document = await new VideoDocumentReader(Options).ReadAsync(new FileInfo(clip.Mpeg4Part2), "part2.mp4");
+
+        Assert.Equal(Headers.Select(h => $"## {h}"), document.Sections.Select(s => s.Elements[0].GetMarkdown()));
+        Assert.All(document.Sections, s => Assert.DoesNotContain(s.Elements, e => e is IngestionDocumentImage));
     }
 
     [Fact]
