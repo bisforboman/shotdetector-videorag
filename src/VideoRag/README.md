@@ -15,8 +15,9 @@ video ──VideoDocumentReader──► one section per shot ──ImageAlterna
   the shot's middle frame as a JPEG (at most 640 px wide, quality 85) with no alternative text yet. The stills are
   decoded and encoded in managed code by [ManagedCodecs.Thumbnails](https://github.com/bisforboman/ManagedCodecs)
   (`VideoThumbnail`, `Thumbnail.ToJpeg`): MP4 and AVI with H.264 or MJPEG, no FFmpeg; any other file (MKV, WebM,
-  HEVC, MPEG-4 Part 2, ...) gets sections without stills. Each still reopens the file and decodes from the keyframe
-  before it, about 0.3 s a still on Sintel's 480p trailer. A shot longer than 8 s (`StillInterval`, `--still-every`) gets a still in
+  HEVC, MPEG-4 Part 2, ...) gets sections without stills. Each still decodes from the keyframe before it (about 0.24 s
+  on Sintel's 480p trailer, whose keyframes are up to 10 s apart), so the stills run in parallel, one per processor
+  (`StillThreads`): the trailer's reading went from 3.4 to 2.0 s on 4 cores. A shot longer than 8 s (`StillInterval`, `--still-every`) gets a still in
   the middle of each 8 s or shorter stretch instead, since a fade or a dissolve the detector doesn't cut at leaves one
   long "shot" over several scenes (Sintel's trailer: two of 14 and 24 s). `--detector` picks ShotDetector's detectors,
   comma-separated to run several (`content,threshold` also cuts at fades to black: 20 shots there instead of 10). Each
