@@ -246,6 +246,23 @@ public sealed class VideoRagTests(ThreeShots clip) : IClassFixture<ThreeShots>
     }
 
     [Fact]
+    public async Task ParallelStillsAreTheOneThreadedOnesInOrder()
+    {
+        // Nine stills (three a shot), decoded at once, give the same images in the same order as one at a time.
+        var one = await new VideoDocumentReader(Options with { StillInterval = TimeSpan.FromSeconds(0.8), StillThreads = 1 })
+            .ReadAsync(new FileInfo(clip.Path), "three.mp4");
+        var many = await new VideoDocumentReader(Options with { StillInterval = TimeSpan.FromSeconds(0.8), StillThreads = 8 })
+            .ReadAsync(new FileInfo(clip.Path), "three.mp4");
+
+        static List<(string, byte[])> Stills(IngestionDocument d) =>
+            [.. d.Sections.SelectMany(s => s.Elements.OfType<IngestionDocumentImage>()).Select(i => (i.GetMarkdown(), i.Content!.Value.ToArray()))];
+        var expected = Stills(one);
+        Assert.Equal(9, expected.Count);
+        Assert.Equal(expected.Select(e => e.Item1), Stills(many).Select(e => e.Item1));
+        Assert.All(expected.Zip(Stills(many)), pair => Assert.Equal(pair.First.Item2, pair.Second.Item2));
+    }
+
+    [Fact]
     public async Task AVideoManagedCodecsDoesNotDecodeHasNoStills()
     {
         var document = await new VideoDocumentReader(Options).ReadAsync(new FileInfo(clip.Mpeg4Part2), "part2.mp4");
