@@ -22,6 +22,12 @@ video ──VideoDocumentReader──► one section per shot ──ImageAlterna
   long "shot" over several scenes (Sintel's trailer: two of 14 and 24 s). `--detector` picks ShotDetector's detectors,
   comma-separated to run several (`content,threshold` also cuts at fades to black: 20 shots there instead of 10). Each
   element's metadata has the shot's number and its start and end in seconds. A `Stream` that isn't a file's is copied to a temporary file first, since the stills seek.
+- **Black and still pictures** (`Qc`, on by default; `--no-qc`): ShotDetector's blackdetect and freezedetect run on the
+  detection pass (ffmpeg's defaults, spans of 2 s or more). A shot at least 90% black gets a paragraph `Black screen.`
+  and no stills, so no vision-model call; a still picture in a shot (a title card, a frozen frame; at least 1 s of the
+  shot) gets `Still picture from A to B.` and one still, however many intervals it covers. About 0.4 s more on
+  Sintel's 52 s trailer, whose end title is such a still. freezedetect needs FFmpeg 8: in-process (`--ffmpeg-libs`) or
+  an ffmpeg 8 executable; an older ffmpeg reports no still pictures (black still works).
 - **Transcripts**: with an `ITranscriber` (`WhisperTranscriber`: whisper.cpp through Whisper.net, a ggml model file)
   each shot also gets a paragraph `Said: …` of the speech in it; a segment goes to the shot it overlaps most. Sound
   annotations (`[MUSIC PLAYING]`, `(laughs)`, ♪) are removed from any transcriber's text, so a shot with only music
