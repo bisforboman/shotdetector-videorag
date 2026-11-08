@@ -11,7 +11,7 @@
     <PackageVersion Include="Microsoft.ML.Tokenizers.Data.O200kBase" Version="2.0.1" />
     <PackageVersion Include="Microsoft.SemanticKernel.Connectors.InMemory" Version="1.74.0-preview" />
     <!-- Transcripts: the soundtrack decoded in managed code (MP4/AVI/ADTS, AAC), transcribed by whisper.cpp. -->
-    <PackageVersion Include="ManagedCodecs.Aac" Version="0.7.0" />
+    <PackageVersion Include="ManagedCodecs.Aac" Version="0.9.1" />
     <PackageVersion Include="ManagedCodecs.Containers" Version="0.7.0" />
     <!-- The stills, decoded and encoded as JPEG in managed code (Thumbnail.ToJpeg is 0.7.0's). -->
     <PackageVersion Include="ManagedCodecs.Thumbnails" Version="0.7.0" />
