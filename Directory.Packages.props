@@ -7,7 +7,7 @@
     <PackageVersion Include="ShotDetector" Version="3.27.0" />
     <!-- Microsoft.Extensions.DataIngestion is preview and ships monthly: pinned, moved by Dependabot. -->
     <PackageVersion Include="Microsoft.Extensions.DataIngestion" Version="10.11.0-preview.1.26513.7" />
-    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.11.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="11.0.0" />
     <PackageVersion Include="Microsoft.ML.Tokenizers.Data.O200kBase" Version="2.0.1" />
     <PackageVersion Include="Microsoft.SemanticKernel.Connectors.InMemory" Version="1.74.0-preview" />
     <!-- Transcripts: the soundtrack decoded in managed code (MP4/AVI/ADTS, AAC), transcribed by whisper.cpp. -->
